@@ -1,0 +1,22 @@
+{
+    "interfaces": [
+        { "alias": "Ethernet", "type": "wired" },
+        { "alias": "Wi-Fi", "type": "wifi", "profiles": [] }
+    ],
+    "targets": ["223.5.5.5", "119.29.29.29", "1.1.1.1", "8.8.8.8"],
+    "minSuccess": 1,
+    "intervalSeconds": 5,
+    "pingTimeoutMs": 1000,
+    "failThreshold": 3,
+    "recoverThreshold": 3,
+    "reconnectCooldownSeconds": 30,
+    "wifiRetryMinutes": 5,
+    "demotedMetric": 9000,
+    "flushDnsOnSwitch": true,
+    "statusEveryMinutes": 60,
+    "historySize": 120,
+    "language": "auto",
+    "logPath": "C:\\ProgramData\\NetWatchdog\\watchdog.log",
+    "statusPath": "C:\\ProgramData\\NetWatchdog\\status.json",
+    "logMaxKB": 1024
+}
