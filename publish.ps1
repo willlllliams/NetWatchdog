@@ -25,8 +25,13 @@ $repo = (Get-Content -LiteralPath (Join-Path $root 'REPOSITORY') -Raw).Trim()
 $exe = Join-Path $root "bin\NetWatchdog-Setup-$version.exe"
 $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
 
-& gh release view "v$version" --repo $repo *> $null
-if ($LASTEXITCODE -eq 0) { throw "Release v$version already exists in $repo; raise VERSION first" }
+# "release not found" on stderr is the expected answer here; with ErrorActionPreference = Stop,
+# Windows PowerShell would turn that stderr line into a terminating error, so relax it for this call
+$ErrorActionPreference = 'Continue'
+& gh release view "v$version" --repo $repo 2>&1 | Out-Null
+$exists = $LASTEXITCODE -eq 0
+$ErrorActionPreference = 'Stop'
+if ($exists) { throw "Release v$version already exists in $repo; raise VERSION first" }
 
 $body = (($Notes.Trim(), "SHA-256: ``$hash``") | Where-Object { $_ }) -join "`n`n"
 & gh release create "v$version" $exe --repo $repo --title "NetWatchdog $version" --notes $body
