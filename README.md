@@ -94,17 +94,18 @@ The main page shows the current state:
 2. Lines: one row per line with its role (active, backup, no internet, not connected, disabled, or the Wi-Fi network being tried), a latency chart of recent rounds and a toggle. Red ticks on the chart mark rounds where the probe failed; hover over a row to see its address and packet loss. Turning a line's toggle off stops the watchdog from using it; turning off the wired line, for example, forces traffic onto Wi-Fi. The last enabled line cannot be turned off.
 3. Recent events: the last 4 log entries, with a colored dot for the event kind.
 
-The settings page opens with a short slide from the right and has five groups:
+The settings page slides in from the right and splits the settings into four tabs:
 
-| Group | Settings |
+| Tab | Settings |
 |---|---|
 | General | Automatic switching (off pauses switching and hands every line back to Windows routing), start at sign-in, check for updates automatically, current version with a Check now button |
 | Probing | Probe targets (add or remove IP addresses, host names and URLs), how many failed targets make an outage, timeout, check interval, failed rounds before switching, successful rounds before switching back |
 | Wi-Fi | Whether to try saved Wi-Fi networks on an outage, how long a network without internet is skipped |
-| Log | Log language (system, Chinese, English), open the log, open the data folder |
-| About | Project page, reset every setting changed in the panel back to the config file |
+| More | Log language (system, Chinese, English), open the log, open the data folder, project page, reset every setting changed in the panel back to the config file |
 
-![Settings page](docs/en/settings-full.png)
+The flyout keeps the size and position of the main page while the settings page is open, so it never moves when you switch pages or tabs; a tab with more content scrolls inside it. The flyout is never taller than 640 px or the work area, and it is sized and placed in one step, so it never covers the taskbar.
+
+![Settings page](docs/en/settings.png)
 
 When the watchdog is not running or not responding, a banner appears at the top. If the background task is missing, Repair runs the installer kept in the install folder to register the task again; if the task is stuck, Restart restarts it. Both need UAC approval.
 
@@ -146,7 +147,7 @@ The log language of the watchdog comes from the `language` config setting. The i
 
 ## Installation
 
-Run `NetWatchdog-Setup-1.1.0.exe` and approve the UAC prompt to open the setup wizard:
+Run `NetWatchdog-Setup-1.1.1.exe` and approve the UAC prompt to open the setup wizard:
 
 ![Setup wizard](docs/en/setup-welcome.png)
 
@@ -194,7 +195,7 @@ The setup package accepts these arguments, which are useful for deployment:
 For example, a quiet installation from an elevated PowerShell:
 
 ```powershell
-Start-Process .\NetWatchdog-Setup-1.1.0.exe -ArgumentList '--quiet' -Wait
+Start-Process .\NetWatchdog-Setup-1.1.1.exe -ArgumentList '--quiet' -Wait
 ```
 
 ## Building from source

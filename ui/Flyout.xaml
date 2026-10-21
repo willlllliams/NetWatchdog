@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:NetWatchdogUI"
-        Title="{local:Tr 'NetWatchdog', '网络看门狗'}" Width="360" SizeToContent="Height"
+        Title="{local:Tr 'NetWatchdog', '网络看门狗'}" Width="360" Height="480" SizeToContent="Manual"
         WindowStyle="None" ResizeMode="CanResize" ShowInTaskbar="False" Topmost="True"
         WindowStartupLocation="Manual" Left="-32000" Top="-32000"
         Background="{DynamicResource Bg}" Foreground="{DynamicResource Text}"
@@ -181,254 +181,263 @@
                 </ScrollViewer>
 
                 <!-- ======================== Settings page ======================== -->
-                <ScrollViewer x:Name="SettingsPage" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                              Focusable="False" Visibility="{Binding SettingsVisibility}">
-                    <ScrollViewer.RenderTransform>
+                <!-- Tabs keep every group short: General | Probing | Wi-Fi | More -->
+                <Grid x:Name="SettingsPage" Visibility="{Binding SettingsVisibility}">
+                    <Grid.RenderTransform>
                         <TranslateTransform/>
-                    </ScrollViewer.RenderTransform>
-                    <StackPanel Margin="12,0,12,4">
-
-                        <!-- General -->
-                        <Grid Height="22" Margin="8,0,4,6">
-                            <TextBlock Text="{local:Tr 'General', '常规'}" Style="{StaticResource SectionTitle}"/>
-                        </Grid>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Automatic switching', '自动切换'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Switch on outage, back on recovery', '断网时换到可用线路，恢复后切回'}"/>
-                                    </StackPanel>
-                                    <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="pause"
-                                              IsChecked="{Binding AutoSwitch, Mode=OneWay}" Opacity="{Binding AutoSwitchOpacity}"/>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Start at sign-in', '登录时启动'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Show the status icon in the tray', '在通知区域显示网络状态图标'}"/>
-                                    </StackPanel>
-                                    <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="autostart"
-                                              IsChecked="{Binding AutoStart, Mode=OneWay}"/>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Check for updates automatically', '自动检查更新'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Look for a new release on GitHub once a day', '每天检查一次 GitHub 上的新版本'}"/>
-                                    </StackPanel>
-                                    <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="autoupdate"
-                                              IsChecked="{Binding AutoUpdate, Mode=OneWay}"/>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{Binding VersionText}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{Binding UpdateStatusText}"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="checkupdate" MinWidth="0"
-                                            Content="{local:Tr 'Check now', '检查更新'}" VerticalAlignment="Center"/>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Probing -->
-                        <Grid Height="22" Margin="8,16,4,6">
-                            <TextBlock Text="{local:Tr 'Probing', '探测'}" Style="{StaticResource SectionTitle}"/>
-                        </Grid>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <StackPanel Margin="14,12,14,4">
-                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Probe targets', '探测目标'}"/>
-                                    <TextBlock Style="{StaticResource RowDetail}"
-                                               Text="{local:Tr 'IP addresses, host names or http(s):// URLs, up to 10. A URL only counts as reachable when it answers with 2xx.', 'IP 地址、域名或 http(s):// 网址，最多 10 个。网址只有返回 2xx 才算可达。'}"/>
+                    </Grid.RenderTransform>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Margin="12,0,12,12" Padding="2" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource Stroke}">
+                        <UniformGrid Rows="1">
+                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:general"
+                                         IsChecked="{Binding TabGeneral, Mode=OneWay}" Content="{local:Tr 'General', '常规'}"/>
+                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:probe"
+                                         IsChecked="{Binding TabProbe, Mode=OneWay}" Content="{local:Tr 'Probing', '探测'}"/>
+                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:wifi"
+                                         IsChecked="{Binding TabWifi, Mode=OneWay}" Content="Wi-Fi"/>
+                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:more"
+                                         IsChecked="{Binding TabMore, Mode=OneWay}" Content="{local:Tr 'More', '更多'}"/>
+                        </UniformGrid>
+                    </Border>
+                    <ScrollViewer x:Name="SettingsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                        <Grid Margin="12,0,12,4">
+                            <StackPanel Visibility="{Binding TabGeneralVisibility}">
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Automatic switching', '自动切换'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Switch on outage, back on recovery', '断网时换到可用线路，恢复后切回'}"/>
                                 </StackPanel>
-                                <ItemsControl ItemsSource="{Binding Targets}" Focusable="False" Margin="14,0,8,0">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid Height="34">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                                <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource Icons}" FontSize="12"
-                                                           Foreground="{DynamicResource SubText}" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                                                <TextBlock Grid.Column="1" Text="{Binding Text}" VerticalAlignment="Center"
-                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
-                                                <Button Grid.Column="2" Style="{StaticResource IconButton}" Tag="removetarget" Width="30" Height="30"
-                                                        Content="&#xE711;" ToolTip="{local:Tr 'Remove', '删除'}"/>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <Grid Margin="14,6,14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <TextBox x:Name="NewTargetBox" Style="{StaticResource InputBox}"
-                                             Text="{Binding NewTarget, UpdateSourceTrigger=PropertyChanged}"
-                                             Tag="{local:Tr 'e.g. 1.1.1.1 or https://example.com', '例如 1.1.1.1 或 https://example.com'}"/>
-                                    <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="addtarget" MinWidth="0" Margin="8,0,0,0"
-                                            Content="{local:Tr 'Add', '添加'}"/>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Failed targets for an outage', '几个目标失效算断网'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{Binding FailTargetsHint}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button Style="{StaticResource StepButton}" Tag="dec:failTargets" Content="&#xE949;"/>
-                                        <TextBlock Text="{Binding FailTargetsText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource StepButton}" Tag="inc:failTargets" Content="&#xE948;"/>
-                                    </StackPanel>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Timeout', '超时'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'How long one probe waits for an answer', '单次探测等待回复的时间'}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button Style="{StaticResource StepButton}" Tag="dec:pingTimeoutMs" Content="&#xE949;"/>
-                                        <TextBlock Text="{Binding TimeoutText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource StepButton}" Tag="inc:pingTimeoutMs" Content="&#xE948;"/>
-                                    </StackPanel>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Check interval', '检测间隔'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Pause between two rounds of probes', '两轮探测之间的间隔'}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button Style="{StaticResource StepButton}" Tag="dec:intervalSeconds" Content="&#xE949;"/>
-                                        <TextBlock Text="{Binding IntervalText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource StepButton}" Tag="inc:intervalSeconds" Content="&#xE948;"/>
-                                    </StackPanel>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Rounds before switching', '判定断网'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Failed rounds in a row before a line counts as down', '连续失败几轮才判定线路断网'}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button Style="{StaticResource StepButton}" Tag="dec:failThreshold" Content="&#xE949;"/>
-                                        <TextBlock Text="{Binding FailThresholdText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource StepButton}" Tag="inc:failThreshold" Content="&#xE948;"/>
-                                    </StackPanel>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Rounds before switching back', '判定恢复'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Successful rounds in a row before the primary line is used again', '主线路连续成功几轮才切回'}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button Style="{StaticResource StepButton}" Tag="dec:recoverThreshold" Content="&#xE949;"/>
-                                        <TextBlock Text="{Binding RecoverText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource StepButton}" Tag="inc:recoverThreshold" Content="&#xE948;"/>
-                                    </StackPanel>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Wi-Fi -->
-                        <Grid Height="22" Margin="8,16,4,6">
-                            <TextBlock Text="Wi-Fi" Style="{StaticResource SectionTitle}"/>
-                        </Grid>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Try saved Wi-Fi networks', '断网时逐个尝试 Wi-Fi'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Connect to saved networks, strongest first, until one has internet', '按信号从强到弱连接保存过的网络，直到能上网'}"/>
-                                    </StackPanel>
-                                    <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="wifihunt"
-                                              IsChecked="{Binding WifiHunt, Mode=OneWay}"/>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Retry a failed network after', '失败网络重试间隔'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'A network without internet is skipped for this long', '不能上网的网络在这段时间内不再尝试'}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button Style="{StaticResource StepButton}" Tag="dec:wifiRetryMinutes" Content="&#xE949;"/>
-                                        <TextBlock Text="{Binding WifiRetryText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource StepButton}" Tag="inc:wifiRetryMinutes" Content="&#xE948;"/>
-                                    </StackPanel>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Log -->
-                        <Grid Height="22" Margin="8,16,4,6">
-                            <TextBlock Text="{local:Tr 'Log', '日志'}" Style="{StaticResource SectionTitle}"/>
-                        </Grid>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <StackPanel Margin="14,12">
-                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Log language', '日志语言'}"/>
-                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Recent events show the log in this language', '最近事件也以这种语言显示'}"/>
-                                    <Border Margin="0,10,0,0" Padding="2" CornerRadius="6" BorderThickness="1"
-                                            BorderBrush="{DynamicResource Stroke}" HorizontalAlignment="Left">
-                                        <StackPanel Orientation="Horizontal">
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:auto"
-                                                         IsChecked="{Binding LangAuto, Mode=OneWay}" Content="{local:Tr 'System', '跟随系统'}"/>
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:zh"
-                                                         IsChecked="{Binding LangZh, Mode=OneWay}" Content="中文"/>
-                                            <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:en"
-                                                         IsChecked="{Binding LangEn, Mode=OneWay}" Content="English"/>
-                                        </StackPanel>
-                                    </Border>
+                                <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="pause"
+                                          IsChecked="{Binding AutoSwitch, Mode=OneWay}" Opacity="{Binding AutoSwitchOpacity}"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Start at sign-in', '登录时启动'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Show the status icon in the tray', '在通知区域显示网络状态图标'}"/>
                                 </StackPanel>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <StackPanel Orientation="Horizontal" Margin="8">
-                                    <Button Style="{StaticResource LinkButton}" Tag="log" Content="{local:Tr 'Open log', '打开日志'}"/>
-                                    <Button Style="{StaticResource LinkButton}" Tag="datafolder" Margin="8,0,0,0"
-                                            Content="{local:Tr 'Open data folder', '打开数据文件夹'}"/>
+                                <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="autostart"
+                                          IsChecked="{Binding AutoStart, Mode=OneWay}"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Check for updates automatically', '自动检查更新'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Look for a new release on GitHub once a day', '每天检查一次 GitHub 上的新版本'}"/>
                                 </StackPanel>
+                                <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="autoupdate"
+                                          IsChecked="{Binding AutoUpdate, Mode=OneWay}"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{Binding VersionText}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{Binding UpdateStatusText}"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="checkupdate" MinWidth="0"
+                                        Content="{local:Tr 'Check now', '检查更新'}" VerticalAlignment="Center"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                             </StackPanel>
-                        </Border>
+                            <StackPanel Visibility="{Binding TabProbeVisibility}">
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <StackPanel Margin="14,12,14,4">
+                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Probe targets', '探测目标'}"/>
+                                <TextBlock Style="{StaticResource RowDetail}"
+                                           Text="{local:Tr 'IP addresses, host names or http(s):// URLs, up to 10. A URL only counts as reachable when it answers with 2xx.', 'IP 地址、域名或 http(s):// 网址，最多 10 个。网址只有返回 2xx 才算可达。'}"/>
+                            </StackPanel>
+                            <ItemsControl ItemsSource="{Binding Targets}" Focusable="False" Margin="14,0,8,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Height="34">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource Icons}" FontSize="12"
+                                                       Foreground="{DynamicResource SubText}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Text}" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
+                                            <Button Grid.Column="2" Style="{StaticResource IconButton}" Tag="removetarget" Width="30" Height="30"
+                                                    Content="&#xE711;" ToolTip="{local:Tr 'Remove', '删除'}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Grid Margin="14,6,14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBox x:Name="NewTargetBox" Style="{StaticResource InputBox}"
+                                         Text="{Binding NewTarget, UpdateSourceTrigger=PropertyChanged}"
+                                         Tag="{local:Tr 'e.g. 1.1.1.1 or https://example.com', '例如 1.1.1.1 或 https://example.com'}"/>
+                                <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="addtarget" MinWidth="0" Margin="8,0,0,0"
+                                        Content="{local:Tr 'Add', '添加'}"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
 
-                        <!-- About -->
-                        <Grid Height="22" Margin="8,16,4,6">
-                            <TextBlock Text="{local:Tr 'About', '关于'}" Style="{StaticResource SectionTitle}"/>
-                        </Grid>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Project page', '项目主页'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{Binding RepoText}"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Style="{StaticResource LinkButton}" Tag="github" VerticalAlignment="Center"
-                                            Content="{local:Tr 'Open', '打开'}"/>
-                                </Grid>
-                                <Border Style="{StaticResource RowDivider}"/>
-                                <Grid Margin="14,12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Reset settings', '恢复默认设置'}"/>
-                                        <TextBlock Style="{StaticResource RowDetail}" Text="{Binding ResetHint}"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="reset" MinWidth="0" VerticalAlignment="Center"
-                                            Content="{local:Tr 'Reset', '恢复'}" IsEnabled="{Binding CanReset}"/>
-                                </Grid>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Failed targets for an outage', '几个目标失效算断网'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{Binding FailTargetsHint}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource StepButton}" Tag="dec:failTargets" Content="&#xE949;"/>
+                                    <TextBlock Text="{Binding FailTargetsText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <Button Style="{StaticResource StepButton}" Tag="inc:failTargets" Content="&#xE948;"/>
+                                </StackPanel>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Timeout', '超时'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'How long one probe waits for an answer', '单次探测等待回复的时间'}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource StepButton}" Tag="dec:pingTimeoutMs" Content="&#xE949;"/>
+                                    <TextBlock Text="{Binding TimeoutText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <Button Style="{StaticResource StepButton}" Tag="inc:pingTimeoutMs" Content="&#xE948;"/>
+                                </StackPanel>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Check interval', '检测间隔'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Pause between two rounds of probes', '两轮探测之间的间隔'}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource StepButton}" Tag="dec:intervalSeconds" Content="&#xE949;"/>
+                                    <TextBlock Text="{Binding IntervalText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <Button Style="{StaticResource StepButton}" Tag="inc:intervalSeconds" Content="&#xE948;"/>
+                                </StackPanel>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Rounds before switching', '判定断网'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Failed rounds in a row before a line counts as down', '连续失败几轮才判定线路断网'}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource StepButton}" Tag="dec:failThreshold" Content="&#xE949;"/>
+                                    <TextBlock Text="{Binding FailThresholdText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <Button Style="{StaticResource StepButton}" Tag="inc:failThreshold" Content="&#xE948;"/>
+                                </StackPanel>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Rounds before switching back', '判定恢复'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Successful rounds in a row before the primary line is used again', '主线路连续成功几轮才切回'}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource StepButton}" Tag="dec:recoverThreshold" Content="&#xE949;"/>
+                                    <TextBlock Text="{Binding RecoverText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <Button Style="{StaticResource StepButton}" Tag="inc:recoverThreshold" Content="&#xE948;"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                             </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
+                            <StackPanel Visibility="{Binding TabWifiVisibility}">
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Try saved Wi-Fi networks', '断网时逐个尝试 Wi-Fi'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Connect to saved networks, strongest first, until one has internet', '按信号从强到弱连接保存过的网络，直到能上网'}"/>
+                                </StackPanel>
+                                <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="wifihunt"
+                                          IsChecked="{Binding WifiHunt, Mode=OneWay}"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Retry a failed network after', '失败网络重试间隔'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'A network without internet is skipped for this long', '不能上网的网络在这段时间内不再尝试'}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource StepButton}" Tag="dec:wifiRetryMinutes" Content="&#xE949;"/>
+                                    <TextBlock Text="{Binding WifiRetryText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
+                                    <Button Style="{StaticResource StepButton}" Tag="inc:wifiRetryMinutes" Content="&#xE948;"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                            </StackPanel>
+                            <StackPanel Visibility="{Binding TabMoreVisibility}">
+                    <Grid Height="22" Margin="8,0,4,6">
+                        <TextBlock Text="{local:Tr 'Log', '日志'}" Style="{StaticResource SectionTitle}"/>
+                    </Grid>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <StackPanel Margin="14,12">
+                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Log language', '日志语言'}"/>
+                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Recent events show the log in this language', '最近事件也以这种语言显示'}"/>
+                                <Border Margin="0,10,0,0" Padding="2" CornerRadius="6" BorderThickness="1"
+                                        BorderBrush="{DynamicResource Stroke}" HorizontalAlignment="Left">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:auto"
+                                                     IsChecked="{Binding LangAuto, Mode=OneWay}" Content="{local:Tr 'System', '跟随系统'}"/>
+                                        <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:zh"
+                                                     IsChecked="{Binding LangZh, Mode=OneWay}" Content="中文"/>
+                                        <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:en"
+                                                     IsChecked="{Binding LangEn, Mode=OneWay}" Content="English"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <StackPanel Orientation="Horizontal" Margin="8">
+                                <Button Style="{StaticResource LinkButton}" Tag="log" Content="{local:Tr 'Open log', '打开日志'}"/>
+                                <Button Style="{StaticResource LinkButton}" Tag="datafolder" Margin="8,0,0,0"
+                                        Content="{local:Tr 'Open data folder', '打开数据文件夹'}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Height="22" Margin="8,16,4,6">
+                        <TextBlock Text="{local:Tr 'About', '关于'}" Style="{StaticResource SectionTitle}"/>
+                    </Grid>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Project page', '项目主页'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{Binding RepoText}"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Style="{StaticResource LinkButton}" Tag="github" VerticalAlignment="Center"
+                                        Content="{local:Tr 'Open', '打开'}"/>
+                            </Grid>
+                            <Border Style="{StaticResource RowDivider}"/>
+                            <Grid Margin="14,12">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Reset settings', '恢复默认设置'}"/>
+                                    <TextBlock Style="{StaticResource RowDetail}" Text="{Binding ResetHint}"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="reset" MinWidth="0" VerticalAlignment="Center"
+                                        Content="{local:Tr 'Reset', '恢复'}" IsEnabled="{Binding CanReset}"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                            </StackPanel>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
             </Grid>
 
             <!-- Footer -->

@@ -366,6 +366,27 @@ namespace NetWatchdogUI
         public bool LangZh { get { return langZh; } set { Set(ref langZh, value); } }
         public bool LangEn { get { return langEn; } set { Set(ref langEn, value); } }
         public bool CanReset { get { return canReset; } set { Set(ref canReset, value); } }
+
+        string tab = "general";
+        public string Tab
+        {
+            get { return tab; }
+            set
+            {
+                tab = value;
+                foreach (var name in new[] { "TabGeneral", "TabProbe", "TabWifi", "TabMore",
+                                             "TabGeneralVisibility", "TabProbeVisibility", "TabWifiVisibility", "TabMoreVisibility" })
+                    Raise(name);
+            }
+        }
+        public bool TabGeneral { get { return tab == "general"; } }
+        public bool TabProbe { get { return tab == "probe"; } }
+        public bool TabWifi { get { return tab == "wifi"; } }
+        public bool TabMore { get { return tab == "more"; } }
+        public Visibility TabGeneralVisibility { get { return TabGeneral ? Visibility.Visible : Visibility.Collapsed; } }
+        public Visibility TabProbeVisibility { get { return TabProbe ? Visibility.Visible : Visibility.Collapsed; } }
+        public Visibility TabWifiVisibility { get { return TabWifi ? Visibility.Visible : Visibility.Collapsed; } }
+        public Visibility TabMoreVisibility { get { return TabMore ? Visibility.Visible : Visibility.Collapsed; } }
         public ObservableCollection<LineVM> Lines { get { return LinesList; } }
         public ObservableCollection<EventVM> Events { get { return EventsList; } }
 
@@ -630,8 +651,7 @@ namespace NetWatchdogUI
                 if (e.Key == Key.Escape) HideFlyout();
                 else if (e.Key == Key.Enter && Keyboard.FocusedElement is TextBox) { AddTarget(); e.Handled = true; }
             };
-            flyout.SizeChanged += (s, e) => { if (flyout.IsVisible) Place(); };
-            flyout.DpiChanged += (s, e) => flyout.Dispatcher.BeginInvoke(new Action(Place), DispatcherPriority.Loaded);
+            flyout.DpiChanged += (s, e) => flyout.Dispatcher.BeginInvoke(new Action(Fit), DispatcherPriority.Loaded);
             flyout.Closing += (s, e) => { e.Cancel = true; HideFlyout(); };
 
             if (opt.Snapshot == null) CreateTray();
@@ -644,7 +664,6 @@ namespace NetWatchdogUI
             DateTime due = Updater.LastCheck.AddHours(24), soon = DateTime.Now.AddSeconds(30);
             nextCheck = due < soon ? soon : due;
             if (opt.CheckUpdate) CheckUpdate(false);
-            if (opt.Page == "settings") ShowSettings(true, false);
             Refresh();
             timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             timer.Tick += (s, e) =>
@@ -662,8 +681,9 @@ namespace NetWatchdogUI
                     null, -1, false);
             }
 
+            // --page is applied only once the main page is on screen, so the settings page freezes at its real height
             if (opt.Snapshot != null) StartSnapshot();
-            else if (!opt.Tray) ShowFlyout(WF.Cursor.Position);
+            else if (!opt.Tray) { ShowFlyout(WF.Cursor.Position); OpenRequestedPage(); }
         }
 
         Window LoadFlyout()
@@ -733,34 +753,64 @@ namespace NetWatchdogUI
             Refresh();
 
             anchor = at;
-            var wa = WF.Screen.FromPoint(at).WorkingArea;
-            double scale = Native.ScaleAt(at.X, at.Y);
-            flyout.MaxHeight = Math.Max(300, wa.Height / scale - 24);
-
             bool wasVisible = flyout.IsVisible;
             flyout.Show();
             flyout.UpdateLayout();
-            Place();
+            Fit();
             flyout.Activate();
             Native.SetForegroundWindow(new WindowInteropHelper(flyout).Handle);
             if (!wasVisible) Animate();
         }
 
-        // Dock to the work-area edge on the taskbar's side, 12 pixels away from it
-        void Place()
+        const double MaxFlyoutHeight = 640, MinSettingsHeight = 420;
+        // While the settings page is open the window keeps one height (taken from the main page), so it
+        // never moves when pages or tabs change; tab content scrolls inside it. 0 = size to content.
+        double frozenHeight;
+
+        // Measure the content, then set the window's size and position in a single call: docked to the
+        // work-area edge on the taskbar's side, 12 pixels away from it, never taller than the work area.
+        // Letting WPF grow the window by itself would extend it downward first (over the taskbar and off
+        // screen) and only move it back afterwards.
+        void Fit()
         {
+            // Visibility, not IsVisible: IsVisible only turns true after the next layout pass
             var hwnd = new WindowInteropHelper(flyout).Handle;
-            if (hwnd == IntPtr.Zero) return;
-            Native.RECT r;
-            Native.GetWindowRect(hwnd, out r);
-            int w = r.Right - r.Left, h = r.Bottom - r.Top;
+            if (hwnd == IntPtr.Zero || flyout.Visibility != Visibility.Visible) return;
             var wa = WF.Screen.FromPoint(anchor).WorkingArea;
-            int m = (int)Math.Round(12 * Native.ScaleAt(anchor.X, anchor.Y));
+            double scale = Native.ScaleAt(anchor.X, anchor.Y);
+            double natural;
+            if (frozenHeight > 0) natural = frozenHeight;   // settings page: keep the size, do not float
+            else
+            {
+                var root = (FrameworkElement)flyout.Content;
+                root.Measure(new Size(flyout.Width, double.PositiveInfinity));
+                natural = root.DesiredSize.Height;
+            }
+            double dip = Math.Min(natural, Math.Min(MaxFlyoutHeight, wa.Height / scale - 24));
+            int w = (int)Math.Round(flyout.Width * scale);
+            int h = (int)Math.Round(dip * scale);
+            int m = (int)Math.Round(12 * scale);
             bool right = anchor.X > wa.Left + wa.Width / 2;
             bool bottom = anchor.Y > wa.Top + wa.Height / 2;
             int x = right ? wa.Right - w - m : wa.Left + m;
             int y = bottom ? wa.Bottom - h - m : wa.Top + m;
-            Native.SetWindowPos(hwnd, Native.HWND_TOPMOST, x, y, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            double left = x / scale, top = y / scale;
+            if (Math.Abs(flyout.Left - left) < 0.5 && Math.Abs(flyout.Top - top) < 0.5 && Math.Abs(flyout.Height - dip) < 0.5) return;
+            // Go through WPF's own properties (it would undo a raw SetWindowPos on its next layout pass).
+            // Order matters: when growing, move the top edge first; when shrinking, shrink first.
+            // Either way the window never extends past the work area, not even for one frame.
+            if (double.IsNaN(flyout.Height) || dip > flyout.Height)
+            {
+                flyout.Top = top;
+                flyout.Left = left;
+                flyout.Height = dip;
+            }
+            else
+            {
+                flyout.Height = dip;
+                flyout.Top = top;
+                flyout.Left = left;
+            }
         }
 
         void Animate()
@@ -807,6 +857,11 @@ namespace NetWatchdogUI
                 UpdateEvents();
                 UpdateTrayIcon();
                 MaybeNotify();
+                if (flyout.IsVisible)
+                {
+                    flyout.UpdateLayout();
+                    Fit();
+                }
             }
             catch (Exception ex) { Program.LogError(ex); }
         }
@@ -1156,6 +1211,12 @@ namespace NetWatchdogUI
                     Refresh();
                     break;
                 case "wifihunt": ChangeSetting("wifiHunt", ((CheckBox)fe).IsChecked == true); break;
+                case "tab:general":
+                case "tab:probe":
+                case "tab:wifi":
+                case "tab:more":
+                    ShowTab(tag.Substring(4));
+                    break;
                 case "lang:auto": ChangeSetting("language", "auto"); break;
                 case "lang:zh": ChangeSetting("language", "zh"); break;
                 case "lang:en": ChangeSetting("language", "en"); break;
@@ -1294,14 +1355,39 @@ namespace NetWatchdogUI
         {
             if (show == onSettings) return;
             onSettings = show;
+            if (show)
+            {
+                // Freeze at the main page's natural height (measured while it is still the visible page)
+                frozenHeight = 0;
+                var root = (FrameworkElement)flyout.Content;
+                root.Measure(new Size(flyout.Width, double.PositiveInfinity));
+                frozenHeight = Math.Max(MinSettingsHeight, root.DesiredSize.Height);
+            }
+            else frozenHeight = 0;
             vm.MainVisibility = show ? Visibility.Collapsed : Visibility.Visible;
             vm.SettingsVisibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (flyout.IsVisible) { flyout.UpdateLayout(); Fit(); }
             if (!animate) return;
             var page = (FrameworkElement)flyout.FindName(show ? "SettingsPage" : "MainPage");
             var move = (TranslateTransform)page.RenderTransform;
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
             move.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(show ? 40 : -40, 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
             page.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+        }
+
+        void ShowTab(string name)
+        {
+            vm.Tab = name;
+            ((ScrollViewer)flyout.FindName("SettingsScroll")).ScrollToTop();
+            if (flyout.IsVisible) { flyout.UpdateLayout(); Fit(); }
+        }
+
+        // --page main | settings | settings:<general|probe|wifi|more>
+        void OpenRequestedPage()
+        {
+            if (opt.Page == null || !opt.Page.StartsWith("settings")) return;
+            ShowSettings(true, false);
+            if (opt.Page.StartsWith("settings:")) ShowTab(opt.Page.Substring(9));
         }
 
         static string Rounds(int n) { return n == 1 ? L.T("1 round", "1 轮") : L.F("{0} rounds", "{0} 轮", n); }
@@ -1564,7 +1650,7 @@ namespace NetWatchdogUI
         {
             var wa = WF.Screen.PrimaryScreen.WorkingArea;
             ShowFlyout(new System.Drawing.Point(wa.Right - 20, wa.Bottom - 20));
-            if (opt.Page == "settings") ShowSettings(true, false);
+            OpenRequestedPage();
             flyout.Topmost = true;
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
             t.Tick += (s, e) =>
@@ -1581,7 +1667,7 @@ namespace NetWatchdogUI
                         bmp.Save(opt.Snapshot, SD.Imaging.ImageFormat.Png);
                     }
                     if (onSettings)
-                        RenderFull((FrameworkElement)((ScrollViewer)flyout.FindName("SettingsPage")).Content,
+                        RenderFull((FrameworkElement)((ScrollViewer)flyout.FindName("SettingsScroll")).Content,
                                    Path.ChangeExtension(opt.Snapshot, null) + "-full.png");
                 }
                 catch (Exception ex) { Program.LogError(ex); }
