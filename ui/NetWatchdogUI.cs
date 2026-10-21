@@ -72,6 +72,8 @@ namespace NetWatchdogUI
         [STAThread]
         static int Main(string[] args)
         {
+            // Elevated helper: started through UAC by the panel to approve a system-changing repair
+            if (args.Length == 2 && args[0] == "--allow-repair") return AllowRepair(args[1]);
             var opt = Options.Parse(args);
             Mutex mutex = null;
             EventWaitHandle showEvent = null;
@@ -96,6 +98,31 @@ namespace NetWatchdogUI
             app.Run();
             GC.KeepAlive(mutex);
             return 0;
+        }
+
+        public static readonly string[] AdminRepairs = { "proxy", "dhcp", "hosts", "tcpip", "reboot", "netreset" };
+
+        // Adds the repair to admin-allow.json, which only administrators can write; the watchdog runs
+        // system-changing repairs only when they are listed there
+        static int AllowRepair(string id)
+        {
+            if (Array.IndexOf(AdminRepairs, id) < 0) return 2;
+            try
+            {
+                string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "NetWatchdog", "admin-allow.json");
+                var ser = new JavaScriptSerializer();
+                var ids = new List<string>();
+                if (File.Exists(path))
+                {
+                    var d = ser.DeserializeObject(File.ReadAllText(path)) as Dictionary<string, object>;
+                    object list;
+                    if (d != null && d.TryGetValue("repairs", out list) && list is object[]) ids.AddRange(((object[])list).Select(x => Convert.ToString(x)));
+                }
+                if (!ids.Contains(id)) ids.Add(id);
+                File.WriteAllText(path, ser.Serialize(new Dictionary<string, object> { { "repairs", ids.ToArray() } }), new UTF8Encoding(false));
+                return 0;
+            }
+            catch (Exception ex) { LogError(ex); return 1; }
         }
 
         public static void LogError(Exception ex)
@@ -129,8 +156,23 @@ namespace NetWatchdogUI
         public bool WifiHunt;
         public string Language = "auto";
         public string[] Overridden = new string[0];
+        public List<RepairInfo> Repairs = new List<RepairInfo>();
+        public string[] AdminAllowed = new string[0];
+        public int RebootMaxPerDay = 3;
 
-        public SettingsInfo Clone() { return (SettingsInfo)MemberwiseClone(); }
+        public SettingsInfo Clone()
+        {
+            var c = (SettingsInfo)MemberwiseClone();
+            c.Repairs = Repairs.Select(r => r.Clone()).ToList();
+            return c;
+        }
+
+        // The form sent to and compared with the watchdog: id, enabled, after, cdOffline, cdOnline
+        public static object[] Wire(List<RepairInfo> list)
+        {
+            return list.Select(r => (object)new Dictionary<string, object> {
+                { "id", r.Id }, { "enabled", r.Enabled }, { "after", r.After }, { "cdOffline", r.CdOffline }, { "cdOnline", r.CdOnline } }).ToArray();
+        }
 
         public object Get(string key)
         {
@@ -145,6 +187,8 @@ namespace NetWatchdogUI
                 case "wifiRetryMinutes": return WifiRetry;
                 case "wifiHunt": return WifiHunt;
                 case "language": return Language;
+                case "repairActions": return Wire(Repairs);
+                case "rebootMaxPerDay": return RebootMaxPerDay;
             }
             return null;
         }
@@ -162,8 +206,28 @@ namespace NetWatchdogUI
                 case "wifiRetryMinutes": WifiRetry = (int)v; break;
                 case "wifiHunt": WifiHunt = (bool)v; break;
                 case "language": Language = (string)v; break;
+                case "repairActions":
+                    Repairs = ((object[])v).OfType<Dictionary<string, object>>().Select(d =>
+                    {
+                        var old = Repairs.FirstOrDefault(r => r.Id == (string)d["id"]);
+                        return new RepairInfo {
+                            Id = (string)d["id"], Enabled = (bool)d["enabled"], After = (int)d["after"],
+                            CdOffline = (int)d["cdOffline"], CdOnline = (int)d["cdOnline"],
+                            Admin = old != null && old.Admin, LastRun = old == null ? null : old.LastRun };
+                    }).ToList();
+                    break;
+                case "rebootMaxPerDay": RebootMaxPerDay = (int)v; break;
             }
         }
+    }
+
+    class RepairInfo
+    {
+        public string Id;
+        public bool Enabled, Admin;
+        public int After, CdOffline = 86400, CdOnline = 18000;
+        public DateTime? LastRun;
+        public RepairInfo Clone() { return (RepairInfo)MemberwiseClone(); }
     }
 
     class WatchdogStatus
@@ -177,6 +241,10 @@ namespace NetWatchdogUI
         public string[] Targets;
         public List<LineStatus> Lines = new List<LineStatus>();
         public SettingsInfo Settings;
+        public DateTime? OutageSince, RebootAt;
+        public string[] RepairsDone = new string[0];
+        public int WifiBackupCount;
+        public DateTime WifiBackupCreated;
 
         public static WatchdogStatus Load(string path)
         {
@@ -220,7 +288,29 @@ namespace NetWatchdogUI
                 c.WifiHunt = !sd.ContainsKey("wifiHunt") || Bool(sd, "wifiHunt");
                 c.Language = Str(sd, "language") ?? "auto";
                 c.Overridden = Arr(sd, "overridden").Select(x => Convert.ToString(x, CultureInfo.InvariantCulture)).ToArray();
+                c.AdminAllowed = Arr(sd, "adminAllowed").Select(x => Convert.ToString(x, CultureInfo.InvariantCulture)).ToArray();
+                c.RebootMaxPerDay = Int(sd, "rebootMaxPerDay") ?? 3;
+                foreach (var ro in Arr(sd, "repairActions").OfType<Dictionary<string, object>>())
+                {
+                    var last = Date(ro, "lastRun");
+                    c.Repairs.Add(new RepairInfo {
+                        Id = Str(ro, "id"), Enabled = Bool(ro, "enabled"), After = Int(ro, "after") ?? 60, Admin = Bool(ro, "admin"),
+                        CdOffline = Int(ro, "cdOffline") ?? 86400, CdOnline = Int(ro, "cdOnline") ?? 18000,
+                        LastRun = last == DateTime.MinValue ? (DateTime?)null : last });
+                }
                 s.Settings = c;
+            }
+            var os = Date(d, "outageSince");
+            if (os != DateTime.MinValue) s.OutageSince = os;
+            var ra = Date(d, "rebootAt");
+            if (ra != DateTime.MinValue) s.RebootAt = ra;
+            s.RepairsDone = Arr(d, "repairsDone").Select(x => Convert.ToString(x, CultureInfo.InvariantCulture)).ToArray();
+            object wb;
+            var wd = d.TryGetValue("wifiBackup", out wb) ? wb as Dictionary<string, object> : null;
+            if (wd != null)
+            {
+                s.WifiBackupCount = Int(wd, "count") ?? 0;
+                s.WifiBackupCreated = Date(wd, "created");
             }
             s.LogPath = Str(d, "logPath");
             s.ConfigPath = Str(d, "configPath");
@@ -313,6 +403,30 @@ namespace NetWatchdogUI
         public Visibility DividerVisibility { get { return dividerVisibility; } set { Set(ref dividerVisibility, value); } }
     }
 
+    class RepairVM : Bindable
+    {
+        string title, detail, badge, afterText, cooldownText, cdOfflineText, cdOnlineText;
+        Brush badgeBrush;
+        bool enabled;
+        double toggleOpacity = 1;
+        Visibility dividerVisibility, badgeVisibility, cooldownVisibility = Visibility.Collapsed;
+        public string Id;
+        public bool Expanded;
+        public string CooldownText { get { return cooldownText; } set { Set(ref cooldownText, value); } }
+        public string CdOfflineText { get { return cdOfflineText; } set { Set(ref cdOfflineText, value); } }
+        public string CdOnlineText { get { return cdOnlineText; } set { Set(ref cdOnlineText, value); } }
+        public Visibility CooldownVisibility { get { return cooldownVisibility; } set { Set(ref cooldownVisibility, value); } }
+        public string Title { get { return title; } set { Set(ref title, value); } }
+        public string Detail { get { return detail; } set { Set(ref detail, value); } }
+        public string Badge { get { return badge; } set { Set(ref badge, value); } }
+        public string AfterText { get { return afterText; } set { Set(ref afterText, value); } }
+        public Brush BadgeBrush { get { return badgeBrush; } set { Set(ref badgeBrush, value); } }
+        public bool Enabled { get { return enabled; } set { Set(ref enabled, value); } }
+        public double ToggleOpacity { get { return toggleOpacity; } set { Set(ref toggleOpacity, value); } }
+        public Visibility DividerVisibility { get { return dividerVisibility; } set { Set(ref dividerVisibility, value); } }
+        public Visibility BadgeVisibility { get { return badgeVisibility; } set { Set(ref badgeVisibility, value); } }
+    }
+
     class TargetVM
     {
         public string Text { get; set; }
@@ -344,6 +458,13 @@ namespace NetWatchdogUI
         public readonly ObservableCollection<EventVM> EventsList = new ObservableCollection<EventVM>();
         public readonly ObservableCollection<TargetVM> TargetsList = new ObservableCollection<TargetVM>();
         public ObservableCollection<TargetVM> Targets { get { return TargetsList; } }
+        public readonly ObservableCollection<RepairVM> RepairsList = new ObservableCollection<RepairVM>();
+        public ObservableCollection<RepairVM> Repairs { get { return RepairsList; } }
+        string rebootMaxText, wifiBackupText;
+        Visibility wifiBackupVisibility = Visibility.Collapsed;
+        public string RebootMaxText { get { return rebootMaxText; } set { Set(ref rebootMaxText, value); } }
+        public string WifiBackupText { get { return wifiBackupText; } set { Set(ref wifiBackupText, value); } }
+        public Visibility WifiBackupVisibility { get { return wifiBackupVisibility; } set { Set(ref wifiBackupVisibility, value); } }
 
         public Visibility MainVisibility { get { return mainV; } set { Set(ref mainV, value); } }
         public Visibility SettingsVisibility { get { return settingsV; } set { Set(ref settingsV, value); } }
@@ -374,8 +495,8 @@ namespace NetWatchdogUI
             set
             {
                 tab = value;
-                foreach (var name in new[] { "TabGeneral", "TabProbe", "TabWifi", "TabMore",
-                                             "TabGeneralVisibility", "TabProbeVisibility", "TabWifiVisibility", "TabMoreVisibility" })
+                foreach (var name in new[] { "TabGeneral", "TabProbe", "TabWifi", "TabRepair", "TabMore",
+                                             "TabGeneralVisibility", "TabProbeVisibility", "TabWifiVisibility", "TabRepairVisibility", "TabMoreVisibility" })
                     Raise(name);
             }
         }
@@ -383,6 +504,8 @@ namespace NetWatchdogUI
         public bool TabProbe { get { return tab == "probe"; } }
         public bool TabWifi { get { return tab == "wifi"; } }
         public bool TabMore { get { return tab == "more"; } }
+        public bool TabRepair { get { return tab == "repair"; } }
+        public Visibility TabRepairVisibility { get { return TabRepair ? Visibility.Visible : Visibility.Collapsed; } }
         public Visibility TabGeneralVisibility { get { return TabGeneral ? Visibility.Visible : Visibility.Collapsed; } }
         public Visibility TabProbeVisibility { get { return TabProbe ? Visibility.Visible : Visibility.Collapsed; } }
         public Visibility TabWifiVisibility { get { return TabWifi ? Visibility.Visible : Visibility.Collapsed; } }
@@ -618,6 +741,7 @@ namespace NetWatchdogUI
             { "failThreshold", new[] { 1, 20, 1 } },
             { "recoverThreshold", new[] { 1, 20, 1 } },
             { "wifiRetryMinutes", new[] { 1, 240, 1 } },
+            { "rebootMaxPerDay", new[] { 1, 10, 1 } },
         };
 
         // Updates
@@ -978,6 +1102,26 @@ namespace NetWatchdogUI
                 if (noticeError) { bg = theme["BadSoft"]; fg = theme["Bad"]; glyph = "\uEA39"; }
                 else { bg = theme["AccentSoft"]; fg = theme["Accent"]; glyph = "\uE946"; }
             }
+            else if (st != null && !stale && st.RebootAt.HasValue && st.RebootAt.Value > DateTime.Now)
+            {
+                int left = (int)Math.Ceiling((st.RebootAt.Value - DateTime.Now).TotalSeconds);
+                title = L.F("Restarting in {0} s", "{0} 秒后重启电脑", left);
+                detail = L.T("NetWatchdog restarts the computer to finish repairing the network.", "网络看门狗将重启电脑以完成网络修复。");
+                action = L.T("Cancel restart", "取消重启");
+                bannerKind = "cancelreboot";
+                bg = theme["BadSoft"]; fg = theme["Bad"]; glyph = "\uE7E8";
+            }
+            else if (st != null && !stale && st.WifiBackupCount > 0 && !st.OutageSince.HasValue)
+            {
+                title = st.WifiBackupCount == 1
+                    ? L.T("1 Wi-Fi network can be restored", "有 1 个 Wi-Fi 配置可以恢复")
+                    : L.F("{0} Wi-Fi networks can be restored", "有 {0} 个 Wi-Fi 配置可以恢复", st.WifiBackupCount);
+                detail = L.F("Saved before the network reset on {0:yyyy-MM-dd HH:mm}. Restore imports them into Windows again.",
+                             "这是 {0:yyyy-MM-dd HH:mm} 网络重置前备份的配置，恢复会把它们重新导入 Windows。", st.WifiBackupCreated);
+                action = L.T("Restore", "恢复");
+                bannerKind = "restorewifi";
+                bg = theme["AccentSoft"]; fg = theme["Accent"]; glyph = "\uE701";
+            }
             else if (kind == Kind.Missing)
             {
                 bool canRepair = FindSetup() != null;
@@ -1215,8 +1359,43 @@ namespace NetWatchdogUI
                 case "tab:probe":
                 case "tab:wifi":
                 case "tab:more":
+                case "tab:repair":
                     ShowTab(tag.Substring(4));
                     break;
+                case "repair": ToggleRepair(fe.DataContext as RepairVM, ((CheckBox)fe).IsChecked == true); break;
+                case "rinc": StepRepair(fe.DataContext as RepairVM, 1); break;
+                case "rdec": StepRepair(fe.DataContext as RepairVM, -1); break;
+                case "repairnow": SendRequest("repair-now"); Refresh(); break;
+                case "rexpand":
+                {
+                    var row = fe.DataContext as RepairVM;
+                    if (row == null) break;
+                    row.Expanded = !row.Expanded;
+                    Refresh();
+                    if (flyout.IsVisible) { flyout.UpdateLayout(); Fit(); }
+                    break;
+                }
+                case "cdoffinc": StepCooldown(fe.DataContext as RepairVM, false, 1); break;
+                case "cdoffdec": StepCooldown(fe.DataContext as RepairVM, false, -1); break;
+                case "cdoninc": StepCooldown(fe.DataContext as RepairVM, true, 1); break;
+                case "cdondec": StepCooldown(fe.DataContext as RepairVM, true, -1); break;
+                case "restorewifi": RestoreWifi(); break;
+                case "deletewifi":
+                {
+                    var answer = MessageBox.Show(
+                        L.T("Delete the Wi-Fi backup? The saved networks in it, including their passwords, cannot be restored afterwards.",
+                            "删除 Wi-Fi 备份？删除后，备份里的网络和密码都无法再恢复。"),
+                        L.T("NetWatchdog", "网络看门狗"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                    if (answer == MessageBoxResult.Yes) { SendRequest("delete-wifi-backup"); Refresh(); }
+                    break;
+                }
+                case "repairlog":
+                {
+                    string path = Path.Combine(Path.GetDirectoryName(opt.StatusPath), "repair.log");
+                    if (!File.Exists(path)) { SetNotice(L.T("No repair has run yet", "还没有执行过修复"), path, false); Refresh(); break; }
+                    try { Process.Start("notepad.exe", "\"" + path + "\""); } catch (Exception ex) { Program.LogError(ex); }
+                    break;
+                }
                 case "lang:auto": ChangeSetting("language", "auto"); break;
                 case "lang:zh": ChangeSetting("language", "zh"); break;
                 case "lang:en": ChangeSetting("language", "en"); break;
@@ -1342,6 +1521,12 @@ namespace NetWatchdogUI
                 case "update":
                     StartDownload();
                     break;
+                case "cancelreboot":
+                    SendRequest("cancel-reboot");
+                    break;
+                case "restorewifi":
+                    RestoreWifi();
+                    break;
                 case "page":
                     HideFlyout();
                     try { Process.Start(update.Page); } catch (Exception ex) { Program.LogError(ex); }
@@ -1454,11 +1639,168 @@ namespace NetWatchdogUI
             vm.LangEn = cur.Language == "en";
             foreach (var name in new[] { "WifiHunt", "LangAuto", "LangZh", "LangEn" }) vm.Raise(name);
 
+            UpdateRepairs();
+
             int changed = baseSettings.Overridden.Length;
             vm.CanReset = changed > 0;
             vm.ResetHint = changed > 0
                 ? L.F("{0} setting(s) were changed in this panel; reset returns to the config file", "有 {0} 项设置在面板上改过，恢复后使用配置文件中的值", changed)
                 : L.T("All settings come from the config file", "所有设置都来自配置文件");
+        }
+
+        static readonly Dictionary<string, string[]> RepairText = new Dictionary<string, string[]>
+        {
+            // id -> English title, Chinese title, English detail, Chinese detail
+            { "flushdns", new[] { "Flush DNS cache", "清除 DNS 缓存", "ipconfig /flushdns and /registerdns", "ipconfig /flushdns 与 /registerdns" } },
+            { "arp", new[] { "Clear ARP and neighbor caches", "清除 ARP 与邻居缓存", "Also clears the destination cache", "同时清除目的地缓存" } },
+            { "renew", new[] { "Renew the IP address", "重新获取 IP 地址", "Release and renew DHCP on the adapters that are down", "只对断网的网卡执行 ipconfig /release 与 /renew" } },
+            { "netbios", new[] { "Reload NetBIOS names", "重载 NetBIOS 名称缓存", "nbtstat -R and -RR", "nbtstat -R 与 -RR" } },
+            { "ssl", new[] { "Clear SSL state", "清除 SSL 状态", "Clears cached certificates of HTTPS sessions", "清除 HTTPS 会话缓存的证书状态" } },
+            { "proxy", new[] { "Turn off the system proxy", "关闭系统代理", "Resets the WinHTTP proxy and turns off the proxy of signed-in users", "重置 WinHTTP 代理，并关闭已登录用户的系统代理" } },
+            { "dhcp", new[] { "Switch back to DHCP", "恢复为 DHCP", "Removes static IP and DNS settings of the adapters that are down", "清除断网网卡上的静态 IP 和 DNS 设置" } },
+            { "hosts", new[] { "Restore the default hosts file", "恢复默认 hosts", "The current file is backed up next to it first", "原文件会先备份在同一目录" } },
+            { "tcpip", new[] { "Reset TCP/IP and Winsock", "重置 TCP/IP 与 Winsock", "Takes full effect after a restart", "重启后才完全生效" } },
+            { "reboot", new[] { "Restart the computer", "重启电脑", "60 s countdown that can be cancelled here", "倒计时 60 秒，可在面板取消" } },
+            { "netreset", new[] { "Windows network reset", "Windows 网络重置", "Removes and reinstalls every adapter, clears VPN and proxy settings, then restarts; saved Wi-Fi networks are backed up and can be restored here", "删除并重装所有网卡、清空 VPN 和代理设置后重启；已保存的 Wi-Fi 会先备份，之后可在这里手动恢复" } },
+        };
+
+        // Under 10 minutes in seconds (the stepper moves by 10 or 30 s there), above that in minutes or hours
+        static string AfterText(int s)
+        {
+            if (s < 600 || s % 60 != 0) return L.F("{0} s", "{0} 秒", s);
+            int m = s / 60;
+            if (m % 60 == 0) return L.F("{0} h", "{0} 小时", m / 60);
+            return L.F("{0} min", "{0} 分钟", m);
+        }
+
+        static int AfterStep(int s, int dir)
+        {
+            int step = s < 120 ? 10 : s < 600 ? 30 : s < 3600 ? 60 : 300;
+            if (dir < 0 && s <= 120 && s > 110) step = 10;
+            return Math.Max(10, Math.Min(86400, s + dir * step));
+        }
+
+        // Cooldowns: 0 means none; whole days, hours or minutes
+        static string CdText(int s)
+        {
+            if (s == 0) return L.T("None", "不冷却");
+            if (s % 60 != 0) return L.F("{0} s", "{0} 秒", s);
+            if (s % 86400 == 0) return s == 86400 ? L.T("1 day", "1 天") : L.F("{0} days", "{0} 天", s / 86400);
+            if (s % 3600 == 0) return L.F("{0} h", "{0} 小时", s / 3600);
+            return L.F("{0} min", "{0} 分钟", s / 60);
+        }
+
+        // 10 min steps up to 1 h, 1 h steps up to 1 day, 6 h steps up to 7 days
+        static int CdStep(int s, int dir)
+        {
+            int at = dir < 0 ? s - 1 : s;
+            int step = at < 3600 ? 600 : at < 86400 ? 3600 : 21600;
+            int next = s + dir * step;
+            next -= next % step;
+            if (dir < 0 && next < s - step) next = s - step;
+            return Math.Max(0, Math.Min(604800, next));
+        }
+
+        void UpdateRepairs()
+        {
+            if (st != null && !stale && st.WifiBackupCount > 0)
+            {
+                vm.WifiBackupVisibility = Visibility.Visible;
+                vm.WifiBackupText = L.F("{0} Wi-Fi network(s) backed up before the network reset on {1:yyyy-MM-dd HH:mm}",
+                                        "{1:yyyy-MM-dd HH:mm} 网络重置前备份了 {0} 个 Wi-Fi 配置", st.WifiBackupCount, st.WifiBackupCreated);
+            }
+            else vm.WifiBackupVisibility = Visibility.Collapsed;
+            if (cur == null) { vm.RepairsList.Clear(); vm.RebootMaxText = "—"; return; }
+            if (vm.RepairsList.Count != cur.Repairs.Count || vm.RepairsList.Where((x, i) => x.Id != cur.Repairs[i].Id).Any())
+            {
+                vm.RepairsList.Clear();
+                foreach (var r in cur.Repairs) vm.RepairsList.Add(new RepairVM { Id = r.Id });
+            }
+            bool pendingList = pendingSettings.ContainsKey("repairActions");
+            for (int i = 0; i < cur.Repairs.Count; i++)
+            {
+                var r = cur.Repairs[i];
+                var x = vm.RepairsList[i];
+                string[] t;
+                if (!RepairText.TryGetValue(r.Id, out t)) t = new[] { r.Id, r.Id, "", "" };
+                x.Title = L.T(t[0], t[1]);
+                x.Detail = L.T(t[2], t[3]);
+                x.AfterText = AfterText(r.After);
+                x.CdOfflineText = CdText(r.CdOffline);
+                x.CdOnlineText = CdText(r.CdOnline);
+                string cd = L.F("Cooldown {0} / {1}", "冷却 {0} / {1}", CdText(r.CdOffline), CdText(r.CdOnline));
+                if (r.LastRun.HasValue) cd += L.F(" · last run {0:MM-dd HH:mm}", " · 上次 {0:MM-dd HH:mm}", r.LastRun.Value);
+                x.CooldownText = cd + (x.Expanded ? "  \u25B4" : "  \u25BE");
+                x.CooldownVisibility = x.Expanded ? Visibility.Visible : Visibility.Collapsed;
+                x.Enabled = r.Enabled;
+                x.Raise("Enabled");
+                x.ToggleOpacity = pendingList ? 0.5 : 1;
+                x.DividerVisibility = i == 0 ? Visibility.Collapsed : Visibility.Visible;
+                bool admin = Array.IndexOf(Program.AdminRepairs, r.Id) >= 0;
+                bool allowed = cur.AdminAllowed.Contains(r.Id);
+                if (!admin) { x.BadgeVisibility = Visibility.Collapsed; continue; }
+                x.BadgeVisibility = Visibility.Visible;
+                if (r.Enabled && !allowed)
+                {
+                    x.Badge = L.T("Changes system settings · waiting for administrator approval", "会修改系统设置 · 等待管理员确认");
+                    x.BadgeBrush = theme["Bad"];
+                }
+                else
+                {
+                    x.Badge = L.T("Changes system settings", "会修改系统设置");
+                    x.BadgeBrush = theme["Warn"];
+                }
+            }
+            vm.RebootMaxText = cur.RebootMaxPerDay == 1 ? L.T("1 time", "1 次") : L.F("{0} times", "{0} 次", cur.RebootMaxPerDay);
+        }
+
+        void ChangeRepair(string id, Action<RepairInfo> edit)
+        {
+            if (cur == null) { SendRequest("probe"); return; }
+            var list = cur.Repairs.Select(r => r.Clone()).ToList();
+            var item = list.FirstOrDefault(r => r.Id == id);
+            if (item == null) return;
+            edit(item);
+            ChangeSetting("repairActions", SettingsInfo.Wire(list));
+        }
+
+        void ToggleRepair(RepairVM row, bool on)
+        {
+            if (row == null) return;
+            // Turning a system-changing repair on needs an administrator once; turning it off never does
+            if (on && Array.IndexOf(Program.AdminRepairs, row.Id) >= 0 && cur != null && !cur.AdminAllowed.Contains(row.Id))
+                RunElevated(Assembly.GetExecutingAssembly().Location, "--allow-repair " + row.Id, true);
+            ChangeRepair(row.Id, r => r.Enabled = on);
+        }
+
+        void StepRepair(RepairVM row, int dir)
+        {
+            if (row == null || cur == null) return;
+            var r = cur.Repairs.FirstOrDefault(x => x.Id == row.Id);
+            if (r == null) return;
+            int next = AfterStep(r.After, dir);
+            if (next != r.After) ChangeRepair(row.Id, x => x.After = next);
+        }
+
+        void StepCooldown(RepairVM row, bool online, int dir)
+        {
+            if (row == null || cur == null) return;
+            var r = cur.Repairs.FirstOrDefault(x => x.Id == row.Id);
+            if (r == null) return;
+            int now = online ? r.CdOnline : r.CdOffline;
+            int next = CdStep(now, dir);
+            if (next == now) return;
+            if (online) ChangeRepair(row.Id, x => x.CdOnline = next);
+            else ChangeRepair(row.Id, x => x.CdOffline = next);
+        }
+
+        // Importing the backup is done by the watchdog, which runs as SYSTEM and can read the protected folder
+        void RestoreWifi()
+        {
+            if (SendRequest("restore-wifi"))
+                SetNotice(L.T("Restoring Wi-Fi networks…", "正在恢复 Wi-Fi 配置…"),
+                          L.T("The result appears in the log.", "结果会写入日志。"), false);
+            Refresh();
         }
 
         void ChangeSetting(string key, object value)

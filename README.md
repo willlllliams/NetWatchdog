@@ -94,13 +94,14 @@ The main page shows the current state:
 2. Lines: one row per line with its role (active, backup, no internet, not connected, disabled, or the Wi-Fi network being tried), a latency chart of recent rounds and a toggle. Red ticks on the chart mark rounds where the probe failed; hover over a row to see its address and packet loss. Turning a line's toggle off stops the watchdog from using it; turning off the wired line, for example, forces traffic onto Wi-Fi. The last enabled line cannot be turned off.
 3. Recent events: the last 4 log entries, with a colored dot for the event kind.
 
-The settings page slides in from the right and splits the settings into four tabs:
+The settings page slides in from the right and splits the settings into five tabs:
 
 | Tab | Settings |
 |---|---|
 | General | Automatic switching (off pauses switching and hands every line back to Windows routing), start at sign-in, check for updates automatically, current version with a Check now button |
 | Probing | Probe targets (add or remove IP addresses, host names and URLs), how many failed targets make an outage, timeout, check interval, failed rounds before switching, successful rounds before switching back |
 | Wi-Fi | Whether to try saved Wi-Fi networks on an outage, how long a network without internet is skipped |
+| Repair | Repair actions with their own switch and delay, the daily restart limit, run the enabled repairs now, the repair log (see [Network repair](#network-repair)) |
 | More | Log language (system, Chinese, English), open the log, open the data folder, project page, reset every setting changed in the panel back to the config file |
 
 The flyout keeps the size and position of the main page while the settings page is open, so it never moves when you switch pages or tabs; a tab with more content scrolls inside it. The flyout is never taller than 640 px or the work area, and it is sized and placed in one step, so it never covers the taskbar.
@@ -123,6 +124,59 @@ The watchdog runs as SYSTEM and the panel runs as a normal user. They exchange i
 Between rounds the watchdog checks the `queue` folder every 250 ms, carries out any request and starts a new round right away, so a change in the panel takes effect within a second. Settings changed in the panel are stored in `overrides.json` and layered over `config.json`; the config file itself is never rewritten, and Reset settings removes the layer again.
 
 The installer gives this folder full control for SYSTEM and administrators and read-only access for other users, and grants Modify on the `queue` subfolder only to the user who was signed in during installation. Everyday use therefore needs no UAC prompt, and other users cannot send requests to the watchdog. The watchdog accepts only the requests above: adapter names must exist in the config, settings must be on the list in the configuration table and within their range, and requests older than 2 minutes, files larger than 4 KB and reparse points are discarded.
+
+## Network repair
+
+When no enabled line has internet, the watchdog runs repair actions in order of their delay, measured from the start of the outage. Every action has its own switch, delay and two cooldowns on the Repair tab of the settings page, and nothing more runs once the network is back; a pending restart is cancelled as well. While a backup line still works, no repair touches the system.
+
+![Repair tab](docs/en/repair.png)
+
+| Action | Default | What it does |
+|---|---|---|
+| Flush DNS cache | on, 30 s | `ipconfig /flushdns` and `/registerdns` |
+| Clear ARP and neighbor caches | on, 45 s | ARP, neighbor and destination caches |
+| Renew the IP address | on, 60 s | `ipconfig /release` and `/renew`, only on adapters of lines that are down |
+| Reload NetBIOS names | off, 90 s | `nbtstat -R` and `-RR` |
+| Clear SSL state | off, 90 s | Clears cached HTTPS session state |
+| Turn off the system proxy | off, 120 s | Resets the WinHTTP proxy and turns off the proxy of signed-in users |
+| Switch back to DHCP | off, 150 s | Removes static IP and DNS settings of the adapters that are down |
+| Restore the default hosts file | off, 180 s | The current file is backed up next to it first |
+| Reset TCP/IP and Winsock | off, 5 min | `netsh int ip reset`, `int tcp reset all`, `winsock reset`; takes full effect after a restart |
+| Restart the computer | off, 15 min | `shutdown /r` with a 60 s countdown that the panel can cancel |
+| Windows network reset | off, 30 min | `netcfg -d`, then a restart |
+
+### Cooldowns
+
+After an action has run it cools down, and it does not run again before the cooldown ends, even when its delay is reached again. Each action has two cooldowns, chosen by whether the network came back after the last run:
+
+- Cooldown while still offline (`cdOffline`, 1 day by default): the network has stayed down since the last run. Repeating the same action within one failure rarely helps, and for restart and network reset it would keep the computer in a restart loop, so the default is long.
+- Cooldown after the network was back (`cdOnline`, 5 hours by default): the network recovered after the last run, so this is a new outage. A new failure deserves another attempt, and the 5-hour floor still stops a flapping line from causing restart after restart.
+
+For example, the network goes down at 14:00 and Restart the computer runs at 14:15. If the network is still down after the restart, no further restart happens for this outage before 14:15 the next day. If the network comes back at 15:00 and drops again at 17:00, the 5-hour cooldown applies and the next restart can happen after 19:15.
+
+Run times and the last time the network was up are kept in `repair-state.json` in the data folder, so they survive a restart; an action without a record counts as never run. On the Repair tab, the "Cooldown 1 day / 5 h" line under each row expands into two steppers for these values (0 means no cooldown, at most 7 days), and the same line shows when the action last ran.
+
+The planned AI repair mode will follow the same rule, with the same defaults of 1 day while still offline and 5 hours after the network was back.
+
+The last six actions change system settings. Turning one of them on for the first time asks for UAC approval, which adds it to `admin-allow.json` in the data folder, a file only administrators can write. The watchdog runs these actions only when they are listed there, so another program running as your user cannot switch them on through the request queue. Turning an action off never needs approval.
+
+The Windows network reset is the same operation as Settings > Network reset: it removes every adapter until the next restart and also deletes saved Wi-Fi networks, VPN and proxy settings and Hyper-V virtual switches. Before running it the watchdog exports all Wi-Fi profiles into `wifi-backup` in the data folder. The export contains the Wi-Fi passwords in clear text, so the folder is readable only by SYSTEM and administrators.
+
+You restore the backup by hand. The network setup that was just reset may be the very problem, and an automatic import would bring a faulty profile straight back, so the watchdog keeps the backup and leaves the decision to you. While a backup exists, the main page of the panel shows a banner saying how many Wi-Fi networks can be restored, and the Repair tab has Restore Wi-Fi networks and Delete backup buttons. The watchdog, running as SYSTEM, performs the import, so no UAC prompt appears. The backup is deleted once at least one profile was imported and kept when none was (for example while the wireless adapter is not ready yet); the result goes to the log. Delete backup asks for confirmation first, and a deleted backup cannot be recovered.
+
+Restarts are limited: never within 15 minutes after start-up, and at most `rebootMaxPerDay` times (3 by default, adjustable on the Repair tab) in 24 hours. During the countdown the panel shows a banner with Cancel restart. Every command and its result go to `repair.log` in the data folder.
+
+### NetRepair.exe
+
+The repairs are carried out by `NetRepair.exe`, a command-line port of the repairs in [NetAdapter Repair All In One](https://github.com/Archer1613/netadapter-repair) by Conner Bernhard (MIT License; the license is kept in `tools/NetRepair/LICENSE`). The original is a window with buttons and confirmation dialogs, which another program cannot drive; the port runs the same commands without a window and reports through its output, a log file and the exit code. Its MAC address spoofing, firewall reset and service start-type changes are not part of the port. It can also be used on its own from an elevated prompt:
+
+```powershell
+NetRepair.exe --list
+NetRepair.exe flushdns arp renew --adapter "Wi-Fi" --log C:\Temp\repair.log
+NetRepair.exe tcpip --dry-run
+```
+
+The exit code is 0 when every command succeeded, 1 when at least one failed and 2 for invalid arguments. A command counts as failed when its exit code is not 0 or its output contains an error, so refusals such as "requires elevation" are not mistaken for success.
 
 ## Updates
 
@@ -147,7 +201,7 @@ The log language of the watchdog comes from the `language` config setting. The i
 
 ## Installation
 
-Run `NetWatchdog-Setup-1.1.1.exe` and approve the UAC prompt to open the setup wizard:
+Run `NetWatchdog-Setup-1.2.0.exe` and approve the UAC prompt to open the setup wizard:
 
 ![Setup wizard](docs/en/setup-welcome.png)
 
@@ -195,7 +249,7 @@ The setup package accepts these arguments, which are useful for deployment:
 For example, a quiet installation from an elevated PowerShell:
 
 ```powershell
-Start-Process .\NetWatchdog-Setup-1.1.1.exe -ArgumentList '--quiet' -Wait
+Start-Process .\NetWatchdog-Setup-1.2.0.exe -ArgumentList '--quiet' -Wait
 ```
 
 ## Building from source
@@ -224,6 +278,7 @@ Source layout:
 | `ui\Updater.cs` | Update check, download and verification |
 | `setup\Setup.cs`, `setup\Setup.xaml` | Installer |
 | `ui\Shared.cs`, `ui\Styles.xaml` | Language selection, theme, styles and Win32 interop shared by the panel and the installer |
+| `tools\NetRepair\NetRepair.cs` | `NetRepair.exe`, the command-line port of NetAdapter Repair's repairs |
 | `publish.ps1` | Publishes a GitHub release |
 | `config.example.json` | Example config |
 
@@ -256,6 +311,10 @@ The config file is `C:\ProgramData\NetWatchdog\config.json`. Changing it require
 | `reconnectCooldownSeconds` | 30 | Minimum time between two reconnect attempts on one adapter |
 | `wifiHunt` | true | Try saved Wi-Fi networks one by one when nothing works |
 | `wifiRetryMinutes` | 5 | Minutes before a Wi-Fi network that had no internet is tried again |
+| `repairActions` | see [Network repair](#network-repair) | List of `{ "id", "enabled", "after", "cdOffline", "cdOnline" }`, all in seconds; `after` 10–86400, both cooldowns 0–604800, defaulting to 86400 and 18000 when omitted |
+| `rebootMaxPerDay` | 3 | Restarts allowed in 24 hours |
+| `rebootMinUptimeMinutes` | 15 | No restart this soon after start-up |
+| `rebootCountdownSeconds` | 60 | Countdown before a restart |
 | `demotedMetric` | 9000 | Metric given to demoted lines |
 | `flushDnsOnSwitch` | true | Flush the DNS cache when the active line changes |
 | `statusEveryMinutes` | 60 | Minutes between status summaries in the log; 0 turns them off |

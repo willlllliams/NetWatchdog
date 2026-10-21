@@ -126,7 +126,14 @@ Invoke-Csc $panel `
     @($styles, "$(Join-Path $ui 'Flyout.xaml'),NetWatchdogUI.Flyout.xaml") `
     @($shared, (Join-Path $ui 'NetWatchdogUI.cs'), (Join-Path $ui 'Updater.cs'), $versionFile)
 
-# Setup package: embeds the watchdog script and the freshly built tray panel
+# NetRepair: console port of NetAdapter Repair's repairs, called by the watchdog
+$netRepair = Join-Path $bin 'NetRepair.exe'
+& $csc /nologo /target:exe /platform:anycpu /optimize+ /codepage:65001 /warn:4 "/out:$netRepair" `
+    /r:System.dll /r:System.Core.dll (Join-Path $root 'tools\NetRepair\NetRepair.cs')
+if ($LASTEXITCODE -ne 0) { throw "Building $netRepair failed (csc exit code $LASTEXITCODE)" }
+Write-Host "Built $netRepair"
+
+# Setup package: embeds the watchdog script, NetRepair and the freshly built tray panel
 Get-ChildItem -LiteralPath $bin -Filter 'NetWatchdog-Setup-*.exe' | Remove-Item -Force
 $setupExe = Join-Path $bin "NetWatchdog-Setup-$version.exe"
 Invoke-Csc $setupExe `
@@ -134,5 +141,6 @@ Invoke-Csc $setupExe `
       "$(Join-Path $setup 'Setup.xaml'),NetWatchdogUI.Setup.xaml",
       "$icon,NetWatchdogUI.app.ico",
       "$panel,payload.NetWatchdogUI.exe",
+      "$netRepair,payload.NetRepair.exe",
       "$(Join-Path $root 'NetWatchdog.ps1'),payload.NetWatchdog.ps1") `
     @($shared, (Join-Path $setup 'Setup.cs'), $versionFile)

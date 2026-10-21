@@ -48,6 +48,10 @@ $Defaults = @{
     reconnectCooldownSeconds = 30
     wifiRetryMinutes         = 5
     wifiHunt                 = $true
+    repairActions            = @()
+    rebootMaxPerDay          = 3
+    rebootMinUptimeMinutes   = 15
+    rebootCountdownSeconds   = 60
     demotedMetric            = 9000
     flushDnsOnSwitch         = $true
     statusEveryMinutes       = 60
@@ -56,6 +60,24 @@ $Defaults = @{
     logPath                  = (Join-Path $DataDir 'watchdog.log')
     statusPath               = (Join-Path $DataDir 'status.json')
     logMaxKB                 = 1024
+}
+
+# Repair actions run while no enabled line has internet. Each one has its own switch, delay (seconds since
+# the outage started) and two cooldowns: after it ran, it runs again only once cdOffline seconds have passed
+# if the network stayed down, or cdOnline seconds if the network was back in between. Last runs are kept on
+# disk, so a restart does not reset them (this is what stops restart loops).
+$RepairCatalog = [ordered]@{
+    flushdns = @{ enabled = $true;  after = 30;   admin = $false; cdOffline = 86400; cdOnline = 18000 }
+    arp      = @{ enabled = $true;  after = 45;   admin = $false; cdOffline = 86400; cdOnline = 18000 }
+    renew    = @{ enabled = $true;  after = 60;   admin = $false; cdOffline = 86400; cdOnline = 18000 }
+    netbios  = @{ enabled = $false; after = 90;   admin = $false; cdOffline = 86400; cdOnline = 18000 }
+    ssl      = @{ enabled = $false; after = 90;   admin = $false; cdOffline = 86400; cdOnline = 18000 }
+    proxy    = @{ enabled = $false; after = 120;  admin = $true; cdOffline = 86400; cdOnline = 18000 }
+    dhcp     = @{ enabled = $false; after = 150;  admin = $true; cdOffline = 86400; cdOnline = 18000 }
+    hosts    = @{ enabled = $false; after = 180;  admin = $true; cdOffline = 86400; cdOnline = 18000 }
+    tcpip    = @{ enabled = $false; after = 300;  admin = $true; cdOffline = 86400; cdOnline = 18000 }
+    reboot   = @{ enabled = $false; after = 900;  admin = $true; cdOffline = 86400; cdOnline = 18000 }
+    netreset = @{ enabled = $false; after = 1800; admin = $true; cdOffline = 86400; cdOnline = 18000 }
 }
 
 # ---------- Messages ----------
@@ -91,6 +113,24 @@ $Messages = @{
         SettingRejected     = 'Ignored setting {0}: {1}'
         SettingsReset       = 'Settings changed in the panel were reset; the config file applies again'
         HttpProbeFailed     = 'HTTP probing is unavailable, URL targets count as failed: {0}'
+        RepairRun           = 'Outage for {0} s: running repair {1}'
+        RepairDone          = 'Repair {0} finished'
+        RepairFailed        = 'Repair {0} reported errors; see repair.log'
+        RepairNotAllowed    = 'Repair {0} is enabled but not allowed by an administrator; skipped'
+        RepairMissing       = 'NetRepair.exe was not found; repairs are skipped'
+        RepairNow           = 'Running the enabled repairs now (requested from the panel)'
+        RebootScheduled     = 'Restarting the computer in {0} s ({1})'
+        RebootSkippedUptime = 'Restart skipped: the computer started less than {0} min ago'
+        RebootSkippedLimit  = 'Restart skipped: already restarted {0} times in the last 24 hours'
+        RebootCancelled     = 'Restart cancelled'
+        RebootAborted       = 'Network is back; the pending restart was cancelled'
+        NetResetRun         = 'Running the Windows network reset (netcfg -d); Wi-Fi profiles were backed up and can be restored from the panel'
+        WifiRestored        = 'Restored {0} Wi-Fi profiles saved before the network reset'
+        WifiRestoreFailed   = 'No Wi-Fi profile could be restored; the backup is kept (is the wireless adapter ready?)'
+        WifiBackupDeleted   = 'Deleted the Wi-Fi profile backup'
+        RepairCooling       = 'Repair {0} is cooling down until {1:yyyy-MM-dd HH:mm}'
+        ReasonRepair        = 'the outage was not fixed by repairs'
+        ReasonNetReset      = 'the network reset needs a restart'
         WifiScanEmpty       = '{0}: the scan found no networks; trying saved Wi-Fi networks in saved order'
         WifiAllRecent       = '{0}: every nearby saved Wi-Fi network failed recently; trying again in {1} min'
         WifiNoneLeft        = '{0}: no other saved Wi-Fi network nearby to try'
@@ -145,6 +185,24 @@ $Messages = @{
         SettingRejected     = '忽略设置 {0}：{1}'
         SettingsReset       = '面板上改过的设置已清除，恢复使用配置文件'
         HttpProbeFailed     = 'HTTP 探测不可用，网址类目标一律按失败处理：{0}'
+        RepairRun           = '已断网 {0} 秒：执行修复 {1}'
+        RepairDone          = '修复 {0} 已完成'
+        RepairFailed        = '修复 {0} 报告了错误，详见 repair.log'
+        RepairNotAllowed    = '修复 {0} 已开启，但没有获得管理员允许，已跳过'
+        RepairMissing       = '找不到 NetRepair.exe，跳过修复'
+        RepairNow           = '按面板请求立即执行已开启的修复'
+        RebootScheduled     = '{0} 秒后重启电脑（{1}）'
+        RebootSkippedUptime = '不重启：开机还不到 {0} 分钟'
+        RebootSkippedLimit  = '不重启：24 小时内已经重启 {0} 次'
+        RebootCancelled     = '已取消重启'
+        RebootAborted       = '网络已恢复，已撤销待执行的重启'
+        NetResetRun         = '执行 Windows 网络重置（netcfg -d），Wi-Fi 配置已备份，可在面板手动恢复'
+        WifiRestored        = '已恢复网络重置前备份的 {0} 个 Wi-Fi 配置'
+        WifiRestoreFailed   = '没有恢复任何 Wi-Fi 配置，备份已保留（无线网卡可能还没就绪）'
+        WifiBackupDeleted   = '已删除 Wi-Fi 配置备份'
+        RepairCooling       = '修复 {0} 处于冷却期，{1:yyyy-MM-dd HH:mm} 之后才会再执行'
+        ReasonRepair        = '修复后仍未恢复网络'
+        ReasonNetReset      = '网络重置需要重启才能完成'
         WifiScanEmpty       = '{0}：扫描不到任何网络，按保存顺序尝试已保存的 Wi-Fi'
         WifiAllRecent       = '{0}：附近已保存的 Wi-Fi 刚试过都不能上网，{1} 分钟后再试'
         WifiNoneLeft        = '{0}：附近没有其他已保存的 Wi-Fi 可以尝试'
@@ -331,7 +389,31 @@ function ConvertTo-Setting([string]$Key, $Value) {
         if ($n -lt $ranges[$Key][0] -or $n -gt $ranges[$Key][1]) { throw ('out of range {0}-{1}' -f $ranges[$Key][0], $ranges[$Key][1]) }
         return $n
     }
+    if ($Key -eq 'rebootMaxPerDay') {
+        $n = 0
+        if (-not [int]::TryParse([string]$Value, [ref]$n) -or $n -lt 1 -or $n -gt 10) { throw 'out of range 1-10' }
+        return $n
+    }
     switch ($Key) {
+        'repairActions' {
+            $list = @()
+            foreach ($a in @($Value)) {
+                $id = [string]$a.id
+                if (-not $RepairCatalog.Contains($id)) { throw "unknown repair $id" }
+                $after = 0
+                if (-not [int]::TryParse([string]$a.after, [ref]$after) -or $after -lt 10 -or $after -gt 86400) { throw "delay of $id out of range 10-86400" }
+                $item = [ordered]@{ id = $id; enabled = [bool]$a.enabled; after = $after }
+                foreach ($cd in 'cdOffline', 'cdOnline') {
+                    if ($a.PSObject.Properties[$cd]) {
+                        $n = 0
+                        if (-not [int]::TryParse([string]$a.$cd, [ref]$n) -or $n -lt 0 -or $n -gt 604800) { throw "$cd of $id out of range 0-604800" }
+                        $item[$cd] = $n
+                    }
+                }
+                $list += , $item
+            }
+            return $list
+        }
         'wifiHunt' { return [bool]$Value }
         'language' {
             if (@('auto', 'zh', 'en') -notcontains [string]$Value) { throw "unknown language $Value" }
@@ -398,6 +480,10 @@ function Write-Status {
         logPath         = $Cfg.logPath
         configPath      = (Resolve-Path -LiteralPath $ConfigPath).Path
         interfaces      = $ifs
+        outageSince     = $(if ($Outage.Since) { $Outage.Since.ToString('o') } else { $null })
+        repairsDone     = @($(if ($Outage.Since) { $RepairState.runs.Keys | Where-Object { $RepairState.runs[$_] -ge $Outage.Since } }))
+        wifiBackup      = (Get-WifiBackup)
+        rebootAt        = $(if ($RebootAt) { $RebootAt.ToString('o') } else { $null })
         settings        = [ordered]@{
             targets          = @($Cfg.targets)
             failTargets      = (Get-FailLimit)
@@ -409,6 +495,9 @@ function Write-Status {
             wifiHunt         = [bool]$Cfg.wifiHunt
             language         = [string]$Cfg.language
             overridden       = @($Ov.settings.Keys)
+            rebootMaxPerDay  = [int]$Cfg.rebootMaxPerDay
+            repairActions    = @(Get-RepairStatus)
+            adminAllowed     = @(Get-AdminAllowed)
         }
     }
     try { Write-JsonFile $Cfg.statusPath $obj } catch { }
@@ -418,6 +507,7 @@ function Write-Status {
 
 # A request is a *.req file in the queue directory holding one line:
 #   probe | pause | resume | enable <adapter> | disable <adapter> | set <setting> <json value> | reset
+#   repair-now | cancel-reboot | restore-wifi | delete-wifi-backup
 # Requests older than 2 minutes, files over 4 KB and reparse points are discarded.
 function Invoke-Queue {
     $dir = (Get-StatePaths).Queue
@@ -498,9 +588,24 @@ function Invoke-Request([string]$Text) {
             $script:Cfg = Get-Config
             $script:Lang = Resolve-Language ([string]$Cfg.language)
             $shown = $value
-            if ($value -is [array]) { $shown = $value -join (T 'ListSep') }
+            if ($key -eq 'repairActions') {
+                $shown = (@($value) | ForEach-Object { '{0} {1} {2}s' -f $_.id, $(if ($_.enabled) { 'on' } else { 'off' }), $_.after }) -join (T 'ListSep')
+            } elseif ($value -is [array]) { $shown = $value -join (T 'ListSep') }
             Write-Log 'switch' (T 'SettingChanged' $key $shown)
         }
+        'repair-now' {
+            Write-Log 'switch' (T 'RepairNow')
+            $allowed = Get-AdminAllowed
+            $actions = Get-RepairActions
+            foreach ($id in ($actions.Keys | Sort-Object { $actions[$_].after })) {
+                if (-not $actions[$id].enabled -or $id -eq 'reboot' -or $id -eq 'netreset') { continue }
+                if ($RepairCatalog[$id].admin -and $allowed -notcontains $id) { Write-Log 'info' (T 'RepairNotAllowed' $id); continue }
+                Invoke-Repair $id
+            }
+        }
+        'cancel-reboot' { Stop-Reboot 'RebootCancelled' }
+        'restore-wifi' { Restore-WifiBackup }
+        'delete-wifi-backup' { Remove-WifiBackup }
         'reset' {
             if ($Ov.settings.Count -eq 0) { return }
             $Ov.settings = @{}
@@ -708,6 +813,236 @@ function Connect-Wifi([hashtable]$If) {
     }
 }
 
+# ---------- Repairs ----------
+
+$Outage = @{ Since = $null; Noted = @{} }
+$RebootAt = $null
+$RebootLog = Join-Path $DataDir 'reboots.json'
+$LastOnlineSeen = $null
+
+# Effective repair list: catalog defaults, then repairActions from config.json, then the panel's overrides.
+# Entries without cooldowns (older configs) keep the catalog's cooldowns.
+function Get-RepairActions {
+    $map = [ordered]@{}
+    foreach ($id in $RepairCatalog.Keys) {
+        $c = $RepairCatalog[$id]
+        $map[$id] = @{ enabled = $c.enabled; after = $c.after; cdOffline = $c.cdOffline; cdOnline = $c.cdOnline }
+    }
+    foreach ($a in @($Cfg.repairActions)) {
+        if (-not $a) { continue }
+        $id = [string]$a.id
+        if (-not $map.Contains($id)) { continue }
+        $m = $map[$id]
+        $m.enabled = [bool]$a.enabled
+        $m.after = [int]$a.after
+        foreach ($cd in 'cdOffline', 'cdOnline') {
+            $v = $null
+            if ($a -is [System.Collections.IDictionary]) { if ($a.Contains($cd)) { $v = $a[$cd] } }
+            elseif ($a.PSObject.Properties[$cd]) { $v = $a.$cd }
+            if ($null -ne $v) { $m[$cd] = [int]$v }
+        }
+    }
+    return $map
+}
+
+# Run history on disk: { lastOnline, runs: { id: time } }
+function Get-RepairState {
+    $path = Join-Path (Split-Path -Parent $Cfg.statusPath) 'repair-state.json'
+    $st = @{ lastOnline = $null; runs = @{} }
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $j = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.lastOnline) { $st.lastOnline = [datetime]$j.lastOnline }
+            if ($j.runs) { foreach ($p in $j.runs.PSObject.Properties) { $st.runs[$p.Name] = [datetime]$p.Value } }
+        } catch { }
+    }
+    return $st
+}
+
+function Save-RepairState {
+    $runs = [ordered]@{}
+    foreach ($k in $RepairState.runs.Keys) { $runs[$k] = $RepairState.runs[$k].ToString('o') }
+    $obj = [ordered]@{ lastOnline = $(if ($RepairState.lastOnline) { $RepairState.lastOnline.ToString('o') } else { $null }); runs = $runs }
+    try { Write-JsonFile (Join-Path (Split-Path -Parent $Cfg.statusPath) 'repair-state.json') $obj } catch { }
+}
+
+# When the action may run again, or $null if it never ran
+function Get-RepairReadyAt([string]$Id, $Action) {
+    if (-not $RepairState.runs.ContainsKey($Id)) { return $null }
+    $last = $RepairState.runs[$Id]
+    $online = $RepairState.lastOnline
+    $cd = $Action.cdOffline
+    if ($online -and $online -gt $last) { $cd = $Action.cdOnline }
+    return $last.AddSeconds([int]$cd)
+}
+
+function Get-RepairStatus {
+    $map = Get-RepairActions
+    foreach ($id in $map.Keys) {
+        $last = $null
+        if ($RepairState.runs.ContainsKey($id)) { $last = $RepairState.runs[$id].ToString('o') }
+        [ordered]@{
+            id = $id; enabled = [bool]$map[$id].enabled; after = [int]$map[$id].after
+            cdOffline = [int]$map[$id].cdOffline; cdOnline = [int]$map[$id].cdOnline
+            admin = [bool]$RepairCatalog[$id].admin; lastRun = $last
+        }
+    }
+}
+
+function Get-WifiBackup {
+    $dir = Join-Path (Split-Path -Parent $Cfg.statusPath) 'wifi-backup'
+    if (-not (Test-Path -LiteralPath $dir)) { return $null }
+    $files = @(Get-ChildItem -LiteralPath $dir -Filter '*.xml' -ErrorAction SilentlyContinue)
+    if ($files.Count -eq 0) { return $null }
+    return [ordered]@{ count = $files.Count; created = (Get-Item -LiteralPath $dir).CreationTime.ToString('o') }
+}
+
+# System-changing repairs need an administrator's permission, stored where only administrators can write
+function Get-AdminAllowed {
+    $path = Join-Path (Split-Path -Parent $Cfg.statusPath) 'admin-allow.json'
+    $ids = @()
+    if (Test-Path -LiteralPath $path) {
+        try { $ids = @((Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json).repairs | ForEach-Object { [string]$_ }) } catch { }
+    }
+    return $ids
+}
+
+function Invoke-NetRepair([string[]]$Actions, [string]$Adapter) {
+    $exe = Join-Path $PSScriptRoot 'NetRepair.exe'
+    if (-not (Test-Path -LiteralPath $exe)) { Write-Log 'bad' (T 'RepairMissing'); return $false }
+    $a = @($Actions) + @('--log', (Join-Path (Split-Path -Parent $Cfg.statusPath) 'repair.log'))
+    if ($Adapter) { $a += @('--adapter', $Adapter) }
+    if ($DryRun) { $a += '--dry-run' }
+    & $exe @a | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Get-RebootTimes {
+    $times = @()
+    if (Test-Path -LiteralPath $RebootLog) {
+        try { $times = @((Get-Content -LiteralPath $RebootLog -Raw | ConvertFrom-Json) | ForEach-Object { [datetime]$_ }) } catch { }
+    }
+    return @($times | Where-Object { ((Get-Date) - $_).TotalHours -lt 24 })
+}
+
+# Restart with a countdown, unless the computer has just started or the daily limit is reached
+function Request-Reboot([string]$Reason, [bool]$Force) {
+    if ($script:RebootAt) { return }
+    $uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+    if (-not $Force -and $uptime.TotalMinutes -lt [int]$Cfg.rebootMinUptimeMinutes) {
+        Write-Log 'info' (T 'RebootSkippedUptime' $Cfg.rebootMinUptimeMinutes); return
+    }
+    $recent = @(Get-RebootTimes)
+    if (-not $Force -and $recent.Count -ge [int]$Cfg.rebootMaxPerDay) {
+        Write-Log 'info' (T 'RebootSkippedLimit' $recent.Count); return
+    }
+    $wait = [int]$Cfg.rebootCountdownSeconds
+    Write-Log 'switch' (T 'RebootScheduled' $wait $Reason)
+    if ($DryRun) { return }
+    $times = @($recent | ForEach-Object { $_.ToString('o') }) + @((Get-Date).ToString('o'))
+    try { Set-Content -LiteralPath $RebootLog -Value (ConvertTo-Json @($times) -Compress) -Encoding UTF8 } catch { }
+    & shutdown.exe /r /t $wait /c "NetWatchdog: $Reason" | Out-Null
+    $script:RebootAt = (Get-Date).AddSeconds($wait)
+}
+
+function Stop-Reboot([string]$MessageKey) {
+    if (-not $script:RebootAt) { return }
+    if (-not $DryRun) { & shutdown.exe /a | Out-Null }
+    $script:RebootAt = $null
+    Write-Log 'switch' (T $MessageKey)
+}
+
+# Windows network reset removes every adapter until the next restart and also deletes saved Wi-Fi profiles,
+# so the profiles are exported first, into a folder only SYSTEM and administrators can read because the export
+# contains the passwords. They are imported again only when the user asks for it in the panel.
+function Invoke-NetReset {
+    $dir = Join-Path (Split-Path -Parent $Cfg.statusPath) 'wifi-backup'
+    Write-Log 'switch' (T 'NetResetRun')
+    if ($DryRun) { return }
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    & icacls.exe $dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q | Out-Null
+    & netsh.exe wlan export profile key=clear "folder=$dir" | Out-Null
+    & netcfg.exe -d | Out-Null
+    Request-Reboot (T 'ReasonNetReset') $true
+}
+
+function Restore-WifiBackup {
+    $dir = Join-Path (Split-Path -Parent $Cfg.statusPath) 'wifi-backup'
+    $files = @(Get-ChildItem -LiteralPath $dir -Filter '*.xml' -ErrorAction SilentlyContinue)
+    if ($files.Count -eq 0) { return }
+    $ok = 0
+    foreach ($f in $files) {
+        if ($DryRun) { $ok++; continue }
+        & netsh.exe wlan add profile "filename=$($f.FullName)" user=all | Out-Null
+        if ($LASTEXITCODE -eq 0) { $ok++ }
+    }
+    # Keep the backup when nothing could be imported (for example while the wireless adapter is not ready)
+    if ($ok -gt 0) {
+        if (-not $DryRun) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        Write-Log 'good' (T 'WifiRestored' $ok)
+    } else { Write-Log 'bad' (T 'WifiRestoreFailed') }
+}
+
+function Remove-WifiBackup {
+    $dir = Join-Path (Split-Path -Parent $Cfg.statusPath) 'wifi-backup'
+    if (-not (Test-Path -LiteralPath $dir)) { return }
+    if (-not $DryRun) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Log 'switch' (T 'WifiBackupDeleted')
+}
+
+function Invoke-Repair([string]$Id) {
+    switch ($Id) {
+        'reboot' { Request-Reboot (T 'ReasonRepair') $false; return }
+        'netreset' { Invoke-NetReset; return }
+    }
+    $ok = $true
+    if ($Id -eq 'renew' -or $Id -eq 'dhcp') {
+        # Only the adapters of lines that are down; a working line is never touched
+        foreach ($if in $Cfg.interfaces) {
+            if ($Ov.disabled -contains $if.alias -or $State[$if.alias].Healthy) { continue }
+            if (-not (Invoke-NetRepair @($Id) $if.alias)) { $ok = $false }
+        }
+    } else {
+        $ok = Invoke-NetRepair @($Id) $null
+    }
+    if ($ok) { Write-Log 'good' (T 'RepairDone' $Id) } else { Write-Log 'bad' (T 'RepairFailed' $Id) }
+}
+
+# Called once per round. An outage starts when no enabled line has internet (and switching is not paused).
+function Step-Repairs([bool]$Offline) {
+    if (-not $Offline) {
+        $script:LastOnlineSeen = Get-Date
+        if ($script:Outage.Since) { $script:Outage = @{ Since = $null; Noted = @{} } }
+        Stop-Reboot 'RebootAborted'
+        return
+    }
+    if (-not $script:Outage.Since) {
+        $script:Outage = @{ Since = (Get-Date); Noted = @{} }
+        # Remember when the network was last up, so cooldowns survive a restart
+        if ($script:LastOnlineSeen) { $RepairState.lastOnline = $script:LastOnlineSeen; Save-RepairState }
+    }
+    $elapsed = ((Get-Date) - $script:Outage.Since).TotalSeconds
+    $allowed = Get-AdminAllowed
+    $actions = Get-RepairActions
+    foreach ($id in ($actions.Keys | Sort-Object { $actions[$_].after })) {
+        $a = $actions[$id]
+        if (-not $a.enabled -or $elapsed -lt $a.after) { continue }
+        $ready = Get-RepairReadyAt $id $a
+        if ($ready -and (Get-Date) -lt $ready) {
+            if (-not $script:Outage.Noted.ContainsKey("cd:$id")) { $script:Outage.Noted["cd:$id"] = $true; Write-Log 'info' (T 'RepairCooling' $id $ready) }
+            continue
+        }
+        if ($RepairCatalog[$id].admin -and $allowed -notcontains $id) {
+            if (-not $script:Outage.Noted.ContainsKey("na:$id")) { $script:Outage.Noted["na:$id"] = $true; Write-Log 'info' (T 'RepairNotAllowed' $id) }
+            continue
+        }
+        Write-Log 'switch' (T 'RepairRun' ([int]$elapsed) $id)
+        $RepairState.runs[$id] = Get-Date
+        Save-RepairState
+        Invoke-Repair $id
+    }
+}
+
 function Enable-Adapter([hashtable]$If) {
     Write-Log 'switch' (T 'AdapterEnable' $If.alias)
     if ($DryRun) { return }
@@ -790,6 +1125,7 @@ if (-not $DryRun) {
     }
 }
 
+$RepairState = Get-RepairState
 $State = @{}
 $Info = @{}
 $Active = $null
@@ -921,6 +1257,9 @@ while ($true) {
                 elseif ($if.type -eq 'wifi' -and $Cfg.wifiHunt) { Connect-Wifi $if }
             }
         }
+
+        # 4. Repairs while nothing works
+        Step-Repairs ((-not $Ov.paused) -and $activeIdx -lt 0)
 
         $RouteOwner = Get-RouteOwner
         Write-Status

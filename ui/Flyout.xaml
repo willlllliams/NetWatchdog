@@ -198,6 +198,8 @@
                                          IsChecked="{Binding TabProbe, Mode=OneWay}" Content="{local:Tr 'Probing', '探测'}"/>
                             <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:wifi"
                                          IsChecked="{Binding TabWifi, Mode=OneWay}" Content="Wi-Fi"/>
+                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:repair"
+                                         IsChecked="{Binding TabRepair, Mode=OneWay}" Content="{local:Tr 'Repair', '修复'}"/>
                             <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:more"
                                          IsChecked="{Binding TabMore, Mode=OneWay}" Content="{local:Tr 'More', '更多'}"/>
                         </UniformGrid>
@@ -377,6 +379,106 @@
                             </Grid>
                         </StackPanel>
                     </Border>
+                            </StackPanel>
+                            <StackPanel Visibility="{Binding TabRepairVisibility}">
+                                <TextBlock Foreground="{DynamicResource SubText}" TextWrapping="Wrap" LineHeight="18" Margin="8,0,8,10"
+                                           Text="{local:Tr 'When no enabled line has internet, the enabled repairs run in this order once the outage has lasted their delay, and everything stops when the network is back. After a repair has run it waits for its cooldown: one value applies while the network stays down, the other once it has been back in between. Cooldowns survive a restart.', '所有启用的线路都不通时，开启的修复按断网时长依次执行，网络恢复后立即停止。每项执行过后进入冷却：一直没恢复网络时按“仍断网”计时，中间恢复过网络则按“恢复过网络”计时。冷却时间在重启后依然有效。'}"/>
+                                <Border Style="{StaticResource Card}" Margin="0,0,0,12" Visibility="{Binding WifiBackupVisibility}">
+                                    <StackPanel>
+                                        <TextBlock Margin="14,12,14,0" TextWrapping="Wrap" Text="{Binding WifiBackupText}"/>
+                                        <StackPanel Orientation="Horizontal" Margin="8,4,8,8">
+                                            <Button Style="{StaticResource LinkButton}" Tag="restorewifi"
+                                                    Content="{local:Tr 'Restore Wi-Fi networks', '恢复 Wi-Fi 配置'}"/>
+                                            <Button Style="{StaticResource LinkButton}" Tag="deletewifi" Margin="8,0,0,0"
+                                                    Content="{local:Tr 'Delete backup', '删除备份'}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}">
+                                    <ItemsControl ItemsSource="{Binding Repairs}" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Border Height="1" VerticalAlignment="Top" Margin="14,0" Background="{DynamicResource Divider}"
+                                                            Visibility="{Binding DividerVisibility}"/>
+                                                    <Grid Margin="14,10">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                                        <StackPanel Margin="0,0,8,0" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding Title}" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource SubText}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                                            <TextBlock Text="{Binding Badge}" Foreground="{Binding BadgeBrush}" Margin="0,2,0,0"
+                                                                       Visibility="{Binding BadgeVisibility}" TextWrapping="Wrap"/>
+                                                        </StackPanel>
+                                                        <Button Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource LinkButton}" Tag="rexpand" Margin="-6,2,0,-4"
+                                                                HorizontalAlignment="Left" Content="{Binding CooldownText}"
+                                                                ToolTip="{local:Tr 'Cooldown while still offline / after the network was back', '冷却：仍断网时 / 恢复过网络后'}"/>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0"
+                                                                    ToolTip="{local:Tr 'Outage length before this repair runs', '断网多久后执行'}">
+                                                            <Button Style="{StaticResource StepButton}" Tag="rdec" Content="&#xE949;"/>
+                                                            <TextBlock Text="{Binding AfterText}" Width="60" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                            <Button Style="{StaticResource StepButton}" Tag="rinc" Content="&#xE948;"/>
+                                                        </StackPanel>
+                                                        <CheckBox Grid.Column="2" Style="{StaticResource Toggle}" Tag="repair"
+                                                                  IsChecked="{Binding Enabled, Mode=OneWay}" Opacity="{Binding ToggleOpacity}"/>
+                                                        <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,8,0,0" Visibility="{Binding CooldownVisibility}">
+                                                            <Grid Margin="0,2">
+                                                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                                <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource SubText}" TextWrapping="Wrap"
+                                                                           Text="{local:Tr 'Cooldown while still offline', '仍断网时的冷却'}"/>
+                                                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                                    <Button Style="{StaticResource StepButton}" Tag="cdoffdec" Content="&#xE949;"/>
+                                                                    <TextBlock Text="{Binding CdOfflineText}" Width="60" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                                    <Button Style="{StaticResource StepButton}" Tag="cdoffinc" Content="&#xE948;"/>
+                                                                </StackPanel>
+                                                            </Grid>
+                                                            <Grid Margin="0,2">
+                                                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                                <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource SubText}" TextWrapping="Wrap"
+                                                                           Text="{local:Tr 'Cooldown after the network was back', '恢复过网络后的冷却'}"/>
+                                                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                                    <Button Style="{StaticResource StepButton}" Tag="cdondec" Content="&#xE949;"/>
+                                                                    <TextBlock Text="{Binding CdOnlineText}" Width="60" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                                    <Button Style="{StaticResource StepButton}" Tag="cdoninc" Content="&#xE948;"/>
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                                    <StackPanel>
+                                        <Grid Margin="14,12">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Restarts per day', '每天最多重启'}"/>
+                                                <TextBlock Style="{StaticResource RowDetail}"
+                                                           Text="{local:Tr 'Applies to Restart the computer; never within 15 min after start-up', '用于“重启电脑”；开机 15 分钟内不会重启'}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Style="{StaticResource StepButton}" Tag="dec:rebootMaxPerDay" Content="&#xE949;"/>
+                                                <TextBlock Text="{Binding RebootMaxText}" Width="58" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                <Button Style="{StaticResource StepButton}" Tag="inc:rebootMaxPerDay" Content="&#xE948;"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <StackPanel Orientation="Horizontal" Margin="8">
+                                            <Button Style="{StaticResource LinkButton}" Tag="repairnow"
+                                                    Content="{local:Tr 'Run enabled repairs now', '立即执行已开启的修复'}"/>
+                                            <Button Style="{StaticResource LinkButton}" Tag="repairlog" Margin="8,0,0,0"
+                                                    Content="{local:Tr 'Repair log', '修复日志'}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <TextBlock Foreground="{DynamicResource SubText}" TextWrapping="Wrap" LineHeight="18" Margin="8,10,8,0"
+                                           Text="{local:Tr 'Repairs marked as changing system settings need administrator approval the first time they are turned on. Repair commands come from NetAdapter Repair All In One by Conner Bernhard (MIT).', '标为“会修改系统设置”的修复，第一次开启时需要管理员确认。修复命令取自 Conner Bernhard 的 NetAdapter Repair All In One（MIT 许可证）。'}"/>
                             </StackPanel>
                             <StackPanel Visibility="{Binding TabMoreVisibility}">
                     <Grid Height="22" Margin="8,0,4,6">

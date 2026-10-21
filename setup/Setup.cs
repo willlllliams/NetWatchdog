@@ -196,7 +196,7 @@ namespace NetWatchdogUI
         static readonly string[] ShortcutNames = { "NetWatchdog.lnk", "网络看门狗.lnk" };
         static string ShortcutPath(string name) { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), name); }
 
-        static readonly string[] ProgramFiles = { "NetWatchdog.ps1", "NetWatchdogUI.exe", "NetWatchdogSetup.exe" };
+        static readonly string[] ProgramFiles = { "NetWatchdog.ps1", "NetWatchdogUI.exe", "NetRepair.exe", "NetWatchdogSetup.exe" };
 
         public static void Log(string msg)
         {
@@ -319,6 +319,7 @@ namespace NetWatchdogUI
             Check(Run("icacls.exe", Q(p.Dir) + " " + LockedAcl), L.T("Setting install folder permissions", "设置安装目录权限"));
             Extract("payload.NetWatchdog.ps1", Path.Combine(p.Dir, "NetWatchdog.ps1"));
             Extract("payload.NetWatchdogUI.exe", Path.Combine(p.Dir, "NetWatchdogUI.exe"));
+            Extract("payload.NetRepair.exe", Path.Combine(p.Dir, "NetRepair.exe"));
             string dest = Path.Combine(p.Dir, "NetWatchdogSetup.exe");
             if (!string.Equals(Path.GetFullPath(SetupProgram.SelfPath), Path.GetFullPath(dest), StringComparison.OrdinalIgnoreCase))
                 Retry(() => File.Copy(SetupProgram.SelfPath, dest, true));
