@@ -41,7 +41,7 @@ namespace NetWatchdogUI
 
     class SetupArgs
     {
-        public bool Uninstall, Repair, Quiet, Relocated;
+        public bool Uninstall, Repair, Quiet, Relocated, KeepPi;
         public bool? ForceDark;
         public string Snapshot, Page = "welcome", User, Dir;
         public List<string> Raw = new List<string>();
@@ -56,6 +56,7 @@ namespace NetWatchdogUI
                 if (s == "--uninstall") a.Uninstall = true;
                 else if (s == "--repair") a.Repair = true;
                 else if (s == "--quiet") a.Quiet = true;
+                else if (s == "--keep-pi") a.KeepPi = true;
                 else if (s == "--relocated") { a.Relocated = true; continue; }
                 else if (s == "--dark") a.ForceDark = true;
                 else if (s == "--light") a.ForceDark = false;
@@ -170,7 +171,7 @@ namespace NetWatchdogUI
     class Plan
     {
         public string Dir, User;
-        public bool Standby = true, Autostart = true, Shortcut = true, RemoveData;
+        public bool Standby = true, Autostart = true, Shortcut = true, RemoveData, RemovePi = true;
         public List<DetectedLine> Lines = new List<DetectedLine>();
         // Results worked out while installing; written to the uninstall entry
         public bool StandbyByUs;
@@ -593,7 +594,7 @@ namespace NetWatchdogUI
                 new Step(L.T("Stop the background task and tray panel", "停止后台任务和托盘面板"), () => StopRunning(true)),
                 new Step(L.T("Restore network settings", "恢复网络设置"), () => RestoreNetwork(old)),
                 new Step(L.T("Remove shortcuts and sign-in start", "删除快捷方式和登录启动项"), () => RemoveShortcuts(old)),
-                new Step(L.T("Delete program files", "删除程序文件"), () => RemoveFiles(old)),
+                new Step(L.T("Delete program files", "删除程序文件"), () => RemoveFiles(old, p.RemovePi)),
                 new Step(p.RemoveData ? L.T("Delete settings and log", "删除设置和日志") : L.T("Clean up runtime state", "清理运行状态"), () => RemoveData(p.RemoveData)),
                 new Step(L.T("Remove from Installed apps", "从“已安装的应用”中移除"), () => Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false)),
             };
@@ -641,16 +642,18 @@ namespace NetWatchdogUI
 
         // Delete only our own files and remove the folder once it is empty, so a wrong path in the
         // registry can never delete anything else
-        static void RemoveFiles(InstalledInfo old)
+        static void RemoveFiles(InstalledInfo old, bool removePi)
         {
             foreach (var f in ProgramFiles.Concat(new[] { "config.json" }))
             {
                 string path = Path.Combine(old.Dir, f);
                 if (File.Exists(path)) Retry(() => File.Delete(path));
             }
-            // Pi, installed from the panel's AI tab into a fixed subfolder of the install folder
+            // Pi, installed from the panel's AI tab into a fixed subfolder of the install folder; the uninstall
+            // page asks whether to delete it (--keep-pi keeps it in quiet mode). A Pi folder chosen elsewhere in
+            // the AI tab is never touched.
             string pi = Path.Combine(old.Dir, "pi");
-            if (Directory.Exists(pi)) Retry(() => Directory.Delete(pi, true));
+            if (removePi && Directory.Exists(pi)) Retry(() => Directory.Delete(pi, true));
             if (Directory.Exists(old.Dir) && !Directory.EnumerateFileSystemEntries(old.Dir).Any()) Directory.Delete(old.Dir);
         }
 
@@ -790,7 +793,8 @@ namespace NetWatchdogUI
         Visibility installV = Visibility.Visible, uninstallV = Visibility.Collapsed, linesNoteV = Visibility.Visible;
         Visibility browseV = Visibility.Visible, launchV = Visibility.Collapsed, logLinkV = Visibility.Collapsed;
         Visibility primaryV = Visibility.Visible, secondaryV = Visibility.Visible;
-        bool optStandby = true, optAutostart = true, optShortcut = true, optRemoveData, optLaunch = true;
+        bool optStandby = true, optAutostart = true, optShortcut = true, optRemoveData, optLaunch = true, optRemovePi = true;
+        Visibility piOptionV = Visibility.Collapsed;
         bool primaryEnabled = true, canClose = true;
         double progress;
         Brush doneBrush, doneSoft;
@@ -831,6 +835,8 @@ namespace NetWatchdogUI
         public bool OptAutostart { get { return optAutostart; } set { Set(ref optAutostart, value); } }
         public bool OptShortcut { get { return optShortcut; } set { Set(ref optShortcut, value); } }
         public bool OptRemoveData { get { return optRemoveData; } set { Set(ref optRemoveData, value); } }
+        public bool OptRemovePi { get { return optRemovePi; } set { Set(ref optRemovePi, value); } }
+        public Visibility PiOptionVisibility { get { return piOptionV; } set { Set(ref piOptionV, value); } }
         public bool OptLaunch { get { return optLaunch; } set { Set(ref optLaunch, value); } }
         public bool PrimaryEnabled { get { return primaryEnabled; } set { Set(ref primaryEnabled, value); } }
         public bool CanClose { get { return canClose; } set { Set(ref canClose, value); } }
@@ -871,6 +877,7 @@ namespace NetWatchdogUI
         {
             p.User = a.User;
             p.Dir = old != null ? old.Dir : (a.Dir ?? Installer.DefaultDir);
+            p.RemovePi = !a.KeepPi;
             if (old != null)
             {
                 p.Autostart = old.Autostart;
@@ -1012,6 +1019,8 @@ namespace NetWatchdogUI
                     vm.PrimaryText = L.T("Uninstall", "卸载");
                     vm.InstallVisibility = Visibility.Collapsed;
                     vm.UninstallVisibility = Visibility.Visible;
+                    // Asked only when the panel installed Pi into the install folder
+                    vm.PiOptionVisibility = old != null && Directory.Exists(Path.Combine(old.Dir, "pi")) ? Visibility.Visible : Visibility.Collapsed;
                     vm.FooterNote = L.F("Version {0}", "版本 {0}", old != null ? old.Version : AppInfo.Version);
                     break;
             }
@@ -1076,6 +1085,7 @@ namespace NetWatchdogUI
             plan.Autostart = vm.OptAutostart;
             plan.Shortcut = vm.OptShortcut;
             plan.RemoveData = vm.OptRemoveData;
+            plan.RemovePi = vm.OptRemovePi;
             plan.Dir = vm.InstallDir;
             if (plan.Lines == null || (plan.Lines.Count == 0 && mode != Mode.Uninstall)) plan.Lines = Installer.ReadConfiguredLines() ?? new List<DetectedLine>();
 

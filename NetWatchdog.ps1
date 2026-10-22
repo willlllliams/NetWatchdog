@@ -1378,7 +1378,15 @@ $Ai = @{ Proc = $null; Started = $null; Log = $null }
 
 function Get-AiPaths {
     $ai = Join-Path (Split-Path -Parent $Cfg.statusPath) 'ai'
+    # Where Pi is: config.json, then the folder chosen in the panel (written to ai.json by the elevated helper,
+    # which accepts only folders ordinary users cannot write), then the pi folder next to this script
     $pi = [string]$Cfg.piDir
+    if (-not $pi) {
+        try {
+            $j = Get-Content -LiteralPath (Join-Path $ai 'ai.json') -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json
+            if ($j -and $j.PSObject.Properties['piDir']) { $pi = [string]$j.piDir }
+        } catch { }
+    }
     if (-not $pi) { $pi = Join-Path $PSScriptRoot 'pi' }
     return @{
         Dir = $ai; Agent = (Join-Path $ai 'agent'); Work = (Join-Path $ai 'work'); Logs = (Join-Path $ai 'logs')

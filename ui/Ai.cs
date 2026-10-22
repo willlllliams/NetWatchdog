@@ -14,6 +14,7 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Reflection;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,6 +34,10 @@ namespace NetWatchdogUI
         public static string AiDir { get { return Path.Combine(DataDir, "ai"); } }
         public static string AgentDir { get { return Path.Combine(AiDir, "agent"); } }
         public static string PromptPath { get { return Path.Combine(AiDir, "prompt.md"); } }
+        public static string ConfigPath { get { return Path.Combine(AiDir, "ai.json"); } }
+        // Where the panel installs Pi unless another folder was chosen: next to the panel, in the install folder
+        public static string DefaultPiDir { get { return Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "pi"); } }
+        public static string PiCli(string dir) { return Path.Combine(dir, @"node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js"); }
         public const int MaxPrompt = 4000;
 
         // Presets: service -> OpenAI-compatible base URL
@@ -140,6 +145,18 @@ namespace NetWatchdogUI
                     if (prompt.Length == 0) { if (File.Exists(PromptPath)) File.Delete(PromptPath); }
                     else AppPaths.WriteAtomic(PromptPath, prompt + "\n");
                 }
+                // The folder Pi is started from decides what the watchdog runs as SYSTEM, so it is accepted only
+                // when no ordinary user can write it. An empty value goes back to the folder next to the panel.
+                if (d.ContainsKey("piDir"))
+                {
+                    string dir = Get(d, "piDir").Trim();
+                    if (dir.Length > 0)
+                    {
+                        if (dir.Length > 240 || !Path.IsPathRooted(dir) || !Directory.Exists(dir)) return 5;
+                        if ((new DirectoryInfo(dir).Attributes & FileAttributes.ReparsePoint) != 0 || !OnlyAdmins(dir)) return 6;
+                    }
+                    SaveConfig("piDir", dir.Length == 0 ? null : Path.GetFullPath(dir).TrimEnd('\\'));
+                }
                 if (!d.ContainsKey("baseUrl")) return 0;
                 string url = Get(d, "baseUrl").Trim().TrimEnd('/'), model = Get(d, "model").Trim(), key = Get(d, "apiKey").Trim();
                 if (!ValidUrl(url) || !ValidModel(model) || key.Length > 1000 || key.Any(char.IsControl)) return 2;
@@ -180,10 +197,59 @@ namespace NetWatchdogUI
                     { "models", new object[] { new Dictionary<string, object> { { "id", model } } } },
                 };
                 AppPaths.WriteAtomic(modelsPath, Json.Write(root));
-                AppPaths.WriteAtomic(Path.Combine(AiDir, "ai.json"), Json.Write(new Dictionary<string, object>
+                var cfg = ReadConfig();
+                cfg["baseUrl"] = url;
+                cfg["model"] = model;
+                cfg["hasKey"] = hasKey;
+                cfg["saved"] = DateTime.Now.ToString("o");
+                AppPaths.WriteAtomic(ConfigPath, Json.Write(cfg));
+                return 0;
+            }
+            catch (Exception ex) { Program.LogError(ex); return 1; }
+        }
+
+        // ai.json: what the watchdog and the panel read; the API key itself stays in models.json
+        static Dictionary<string, object> ReadConfig()
+        {
+            try
+            {
+                if (File.Exists(ConfigPath))
                 {
-                    { "baseUrl", url }, { "model", model }, { "hasKey", hasKey }, { "saved", DateTime.Now.ToString("o") },
-                }));
+                    var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(ConfigPath, Encoding.UTF8)) as Dictionary<string, object>;
+                    if (d != null) return d;
+                }
+            }
+            catch { }
+            return new Dictionary<string, object>();
+        }
+
+        static void SaveConfig(string key, object value)
+        {
+            Directory.CreateDirectory(AiDir);
+            var d = ReadConfig();
+            if (value == null) d.Remove(key);
+            else d[key] = value;
+            AppPaths.WriteAtomic(ConfigPath, Json.Write(d));
+        }
+
+        // ------------------------------------------------ Elevated: --remove-pi
+
+        // Deletes the Pi folder the watchdog would start. The folder is read here, from the administrator-only
+        // ai.json, and never taken from the command line, so this cannot be pointed at another folder.
+        public static int RemovePi()
+        {
+            try
+            {
+                object dir;
+                var cfg = ReadConfig();
+                string path = cfg.TryGetValue("piDir", out dir) && dir != null ? Convert.ToString(dir, CultureInfo.InvariantCulture) : DefaultPiDir;
+                if (!Directory.Exists(path)) return 0;
+                // Only a folder that really holds a Pi installation is deleted
+                if (!File.Exists(PiCli(path))) return 7;
+                if ((new DirectoryInfo(path).Attributes & FileAttributes.ReparsePoint) != 0) return 6;
+                Directory.Delete(path, true);
+                // A folder chosen by hand is forgotten with it, so the next install goes to the default again
+                if (cfg.ContainsKey("piDir")) SaveConfig("piDir", null);
                 return 0;
             }
             catch (Exception ex) { Program.LogError(ex); return 1; }

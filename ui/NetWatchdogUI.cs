@@ -76,9 +76,10 @@ namespace NetWatchdogUI
             // Elevated helpers started through UAC by the panel: --allow-repair approves a system-changing repair,
             // --save-ai writes the AI service and prompt into the administrator-only folder. They never fall
             // through to a normal start, whatever arguments they get.
-            if (args.Length > 0 && (args[0] == "--allow-repair" || args[0] == "--save-ai"))
+            if (args.Length > 0 && (args[0] == "--allow-repair" || args[0] == "--save-ai" || args[0] == "--remove-pi"))
             {
                 if (args[0] == "--allow-repair") return args.Length == 2 ? AllowRepair(args[1]) : 2;
+                if (args[0] == "--remove-pi") return args.Length == 1 ? AiSetup.RemovePi() : 2;
                 return args.Length == 3 ? AiSetup.Save(args[1], args[2]) : 2;
             }
             var opt = Options.Parse(args);
@@ -528,12 +529,18 @@ namespace NetWatchdogUI
         public string AiPrompt { get { return aiPrompt; } set { Set(ref aiPrompt, value); } }
         public string AiPromptText { get { return aiPromptText; } set { Set(ref aiPromptText, value); } }
         public Brush AiPromptBrush { get { return aiPromptBrush; } set { Set(ref aiPromptBrush, value); } }
+        string aiPiDirText, aiPiDirHint;
+        Visibility aiPiExtraV = Visibility.Collapsed, aiPiDirResetV = Visibility.Collapsed;
         Brush aiNodeBrush, aiPiBrush, aiServiceHintBrush;
         Visibility aiNodeActionVisibility, aiPiActionVisibility, aiServiceHintVisibility = Visibility.Collapsed, aiStopVisibility = Visibility.Collapsed;
         bool aiMirror, aiOn;
         double aiToggleOpacity = 1;
         public readonly ObservableCollection<string> AiModelsList = new ObservableCollection<string>();
         public ObservableCollection<string> AiModels { get { return AiModelsList; } }
+        public string AiPiDirText { get { return aiPiDirText; } set { Set(ref aiPiDirText, value); } }
+        public string AiPiDirHint { get { return aiPiDirHint; } set { Set(ref aiPiDirHint, value); } }
+        public Visibility AiPiExtraVisibility { get { return aiPiExtraV; } set { Set(ref aiPiExtraV, value); } }
+        public Visibility AiPiDirResetVisibility { get { return aiPiDirResetV; } set { Set(ref aiPiDirResetV, value); } }
         public string AiNodeText { get { return aiNodeText; } set { Set(ref aiNodeText, value); } }
         public string AiNodeAction { get { return aiNodeAction; } set { Set(ref aiNodeAction, value); } }
         public string AiPiText { get { return aiPiText; } set { Set(ref aiPiText, value); } }
@@ -1672,6 +1679,11 @@ namespace NetWatchdogUI
                 case "restorewifi": RestoreWifi(); break;
                 case "ainode": InstallNode(); break;
                 case "aipi": InstallPi(); break;
+                case "aipiopen": OpenPiConsole(); break;
+                case "aipiremove": RemovePi(); break;
+                case "aipidir": ChangePiDir(); break;
+                case "aipidirreset": SaveAiConfig(new Dictionary<string, object> { { "piDir", "" } },
+                        () => SetNotice(L.T("Pi folder reset", "已恢复默认 Pi 目录"), AiSetup.DefaultPiDir, false)); break;
                 case "aimirror": vm.AiMirror = ((CheckBox)fe).IsChecked == true; break;
                 case "aisvc:ollama":
                 case "aisvc:lmstudio":
@@ -2198,6 +2210,14 @@ namespace NetWatchdogUI
             vm.AiPiBrush = ai.PiVersion == null ? theme["Bad"] : theme["SubText"];
             vm.AiPiAction = ai.PiVersion == null ? L.T("Install", "一键安装") : L.T("Update", "升级");
             vm.AiPiActionVisibility = Visibility.Visible;
+            vm.AiPiExtraVisibility = ai.PiVersion == null ? Visibility.Collapsed : Visibility.Visible;
+            vm.AiPiDirText = ai.PiDir ?? AiSetup.DefaultPiDir;
+            bool custom = ai.PiDir != null && !string.Equals(ai.PiDir.TrimEnd('\\'), AiSetup.DefaultPiDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+            vm.AiPiDirHint = custom
+                ? L.T("Chosen folder. Reset goes back to the pi folder in the install folder.", "手动指定的目录。恢复默认后使用安装目录下的 pi。")
+                : L.T("Default: the pi folder in the install folder. Another folder must be writable by administrators only.",
+                      "默认使用安装目录下的 pi。要换成其他目录，该目录必须只有管理员能写入。");
+            vm.AiPiDirResetVisibility = custom ? Visibility.Visible : Visibility.Collapsed;
             vm.Raise("AiMirror");
 
             if (!aiFormLoaded)
@@ -2308,7 +2328,7 @@ namespace NetWatchdogUI
             string prefix = ai.PiDir ?? Path.Combine(ExeDir, "pi");
             string cmd = "\"" + npm + "\" install -g --prefix \"" + prefix + "\" " + AiSetup.PiPackage + "@latest --no-fund --no-audit";
             if (vm.AiMirror) cmd += " --registry=https://registry.npmmirror.com";
-            string cli = Path.Combine(prefix, @"node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js");
+            string cli = AiSetup.PiCli(prefix);
             Process p = null;
             BeginModal();
             try
@@ -2351,6 +2371,71 @@ namespace NetWatchdogUI
                 });
             }
             Refresh();
+        }
+
+        // A console window in the Pi folder with pi on its PATH, running as you: for using Pi yourself, with
+        // your own configuration in ~/.pi. The watchdog's own settings stay in the administrator-only folder.
+        void OpenPiConsole()
+        {
+            var ai = st != null && !stale ? st.Ai : null;
+            string dir = ai != null && ai.PiDir != null ? ai.PiDir : AiSetup.DefaultPiDir;
+            if (!File.Exists(AiSetup.PiCli(dir))) { SetError(L.T("Pi is not installed", "没有安装 Pi"), dir); Refresh(); return; }
+            try
+            {
+                var psi = new ProcessStartInfo("cmd.exe", "/k title Pi & echo " + L.T("Type pi to start the agent.", "输入 pi 启动代理。") + " & cd /d \"" + dir + "\"")
+                    { UseShellExecute = false };
+                psi.EnvironmentVariables["PATH"] = dir + ";" + Environment.GetEnvironmentVariable("PATH");
+                Process.Start(psi);
+                HideFlyout();
+            }
+            catch (Exception ex) { SetError(L.T("Cannot open the console", "无法打开命令行窗口"), ex.Message); Refresh(); }
+        }
+
+        void RemovePi()
+        {
+            var ai = st != null && !stale ? st.Ai : null;
+            string dir = ai != null && ai.PiDir != null ? ai.PiDir : AiSetup.DefaultPiDir;
+            MessageBoxResult answer;
+            BeginModal();
+            try
+            {
+                answer = MessageBox.Show(
+                    L.F("Delete Pi from {0}? AI repair cannot run without it.", "删除 {0} 里的 Pi？删除后 AI 修复将无法运行。", dir),
+                    L.T("NetWatchdog", "网络看门狗"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            }
+            finally { EndModal(); }
+            if (answer != MessageBoxResult.Yes) { Refresh(); return; }
+            RunElevatedAsync(Assembly.GetExecutingAssembly().Location, "--remove-pi", code =>
+            {
+                if (code == 0) { SetNotice(L.T("Pi was deleted", "已删除 Pi"), dir, false); SendRequest("probe"); }
+                else if (code < 0) SetError(L.T("Not deleted", "没有删除"), L.T("Deleting needs administrator approval.", "删除需要管理员确认。"));
+                else if (code == 7) SetError(L.T("Not deleted", "没有删除"), L.T("The folder holds no Pi installation.", "该目录里没有 Pi。"));
+                else SetError(L.T("Not deleted", "没有删除"), L.F("The helper exited with code {0}.", "辅助程序的退出码为 {0}。", code));
+                Refresh();
+            });
+        }
+
+        // Another folder is allowed only when ordinary users cannot write it: its content runs as SYSTEM
+        void ChangePiDir()
+        {
+            string picked;
+            BeginModal();
+            try
+            {
+                using (var dlg = new WF.FolderBrowserDialog())
+                {
+                    dlg.Description = L.T("Choose the folder Pi is installed in (writable by administrators only)", "选择 Pi 的安装目录（必须只有管理员能写入）");
+                    dlg.ShowNewFolderButton = true;
+                    var ai = st != null && !stale ? st.Ai : null;
+                    string cur = ai != null && ai.PiDir != null ? ai.PiDir : AiSetup.DefaultPiDir;
+                    if (Directory.Exists(cur)) dlg.SelectedPath = cur;
+                    if (dlg.ShowDialog() != WF.DialogResult.OK) { Refresh(); return; }
+                    picked = dlg.SelectedPath;
+                }
+            }
+            finally { EndModal(); }
+            SaveAiConfig(new Dictionary<string, object> { { "piDir", picked } },
+                () => SetNotice(L.T("Pi folder saved", "已保存 Pi 目录"), picked, false));
         }
 
         PasswordBox AiKeyBox { get { return (PasswordBox)flyout.FindName("AiKeyBox"); } }
@@ -2448,6 +2533,8 @@ namespace NetWatchdogUI
                 else if (code < 0) SetError(L.T("Not saved", "没有保存"), L.T("Saving needs administrator approval.", "保存需要管理员确认。"));
                 else if (code == 3) SetError(L.T("Not saved", "没有保存"), L.T("The values were changed by another program while waiting for approval.", "等待确认期间，要保存的内容被其他程序改动过。"));
                 else if (code == 4) SetError(L.T("Not saved", "没有保存"), L.T("The permissions of the AI settings folder could not be restricted to administrators.", "无法把 AI 配置目录的权限限制为仅管理员可访问。"));
+                else if (code == 5) SetError(L.T("Not saved", "没有保存"), L.T("The folder does not exist.", "目录不存在。"));
+                else if (code == 6) SetError(L.T("Not saved", "没有保存"), L.T("Ordinary users can write this folder. Pi runs with full rights, so its folder must be writable by administrators only.", "普通用户可以写入这个目录。Pi 以最高权限运行，它所在的目录必须只有管理员能写入。"));
                 else SetError(L.T("Not saved", "没有保存"), L.F("The helper exited with code {0}.", "保存程序的退出码为 {0}。", code));
                 Refresh();
             });

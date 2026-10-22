@@ -204,7 +204,7 @@ AI 修复把断网交给本地大模型处理。断网持续到设定时长后�
 
 | 组件 | 要求 | 面板里的安装方式 |
 |---|---|---|
-| Pi | [Pi coding agent](https://github.com/earendil-works/pi)（MIT 许可证），npm 包 `@earendil-works/pi-coding-agent` | “一键安装 / 升级”，需要管理员确认 |
+| Pi | [Pi coding agent](https://github.com/earendil-works/pi)（MIT 许可证），npm 包 `@earendil-works/pi-coding-agent` | “一键安装 / 升级”“卸载 Pi”“更改目录”，都需要管理员确认 |
 | Node.js | 22.19 或更高版本，装在 `C:\Program Files\nodejs` | 没有或版本过旧时显示“安装 / 升级”，调用 `winget install --id OpenJS.NodeJS.LTS -e --scope machine` |
 | 本地 AI 服务 | 提供兼容 OpenAI 的接口（`/v1/models` 和 `/v1/chat/completions`） | 自行安装，例如 Ollama、LM Studio、llama.cpp 的 `llama-server` |
 
@@ -228,6 +228,14 @@ AI 修复把断网交给本地大模型处理。断网持续到设定时长后�
 - 配置放在 `C:\ProgramData\NetWatchdog\ai\agent`，运行时通过环境变量 `PI_CODING_AGENT_DIR` 指给 Pi。这个目录只有 SYSTEM 和管理员能读写，因为里面可能有 API Key。
 
 这三处都只有管理员能改。你自己的 `~/.pi` 和 cc-switch 的配置不受影响，两边可以同时使用。
+
+因此 cc-switch 看不到看门狗安装的这份 Pi，它显示“未安装”是正常的：cc-switch 判断 Pi 是否可用，看的是能否直接运行 `pi` 命令，而 `C:\Program Files\NetWatchdog\pi` 不在 PATH 上。要自己用 Pi 或让 cc-switch 管理，在 cc-switch 里另装一份即可，两份互不影响。“AI”标签里的“进入 Pi”会打开一个命令行窗口，其中可以直接运行 `pi`，用的是你自己的 `~/.pi` 配置，不是看门狗那份。
+
+Pi 装好后，“AI”标签的 Pi 一行还有这些操作：
+
+- **进入 Pi**：打开命令行窗口，把 Pi 目录加进 PATH，可以直接运行 `pi`。这个窗口以你的身份运行。
+- **卸载 Pi**：删除 Pi 目录，需要管理员确认。要删除的目录由提权程序自己从只有管理员能改的 `ai.json` 中读取，不从命令行接收，所以无法被指向别的目录。
+- **更改目录**：指定 Pi 安装在哪里。因为这个目录里的代码会以 SYSTEM 身份运行，所以只接受普通用户无法写入的目录，也不接受链接；不符合的目录会被拒绝并说明原因。“恢复默认目录”改回安装目录下的 `pi`。目录写进 `ai.json`，看门狗启动 Pi 时读取它。
 
 ### 配置本地 AI 服务
 
@@ -432,6 +440,7 @@ AI 修复以 SYSTEM 身份运行，拥有这台电脑的全部权限，Pi 本身
 |---|---|
 | `--quiet` | 不显示界面，使用默认选项；已安装时沿用原有选项。退出码 0 表示成功 |
 | `--uninstall` | 卸载，可以和 `--quiet` 组合 |
+| `--keep-pi` | 卸载时保留安装目录下的 Pi |
 | `--repair` | 按原有设置直接重新安装 |
 | `--dir <文件夹>` | 首次安装时指定安装位置；程序装进 `<文件夹>\NetWatchdog`，和“浏览”按钮的做法一致 |
 | `--lang <代码>` | 指定界面语言：`en`、`zh`、`zh-TW`、`ja`、`ko` |
@@ -607,7 +616,7 @@ Get-ScheduledTask NetWatchdog | Get-ScheduledTaskInfo
 1. 停止并删除计划任务，结束正在运行的 AI 进程和托盘面板。
 2. 恢复网络设置：把跃点数等于 `demotedMetric` 的接口恢复为自动；如果 Wi-Fi 热备是安装程序开启的，就删除那条组策略值。安装前你自己设置过的策略不受影响。
 3. 删除开始菜单快捷方式和登录启动项，包括 AI 修复的登录提醒。
-4. 删除程序文件：只删除安装程序自己放进去的文件和面板安装的 `pi` 目录，目录空了再删除目录。
+4. 删除程序文件：只删除安装程序自己放进去的文件，目录空了再删除目录。面板安装在安装目录下的 `pi` 是否一并删除，由卸载向导里的“删除 Pi”决定，这个选项只在该目录存在时出现，默认删除；静默卸载加 `--keep-pi` 可以保留。你在“更改目录”里指定到别处的 Pi 不会被删除。
 5. 清理运行状态，按选项删除设置和日志；删除设置时，AI 配置（含 API Key）、AI 日志和 Wi-Fi 备份一并删除。
 6. 从“已安装的应用”中移除。
 

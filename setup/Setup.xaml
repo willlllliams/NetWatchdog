@@ -202,6 +202,25 @@
                                 <CheckBox Grid.Column="2" Style="{StaticResource Toggle}" IsChecked="{Binding OptRemoveData}"/>
                             </Grid>
                         </Border>
+                        <Border Style="{StaticResource Card}" Margin="0,8,0,0" Visibility="{Binding PiOptionVisibility}">
+                            <Grid Height="62" Margin="14,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="36"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Width="36" Height="36" CornerRadius="18" Background="{DynamicResource BadSoft}">
+                                    <TextBlock Text="&#xE74D;" FontFamily="{StaticResource Icons}" FontSize="16"
+                                               Foreground="{DynamicResource Bad}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center">
+                                    <TextBlock Text="{local:Tr 'Delete Pi', '删除 Pi'}" FontSize="14"/>
+                                    <TextBlock Text="{local:Tr 'The Pi installed for AI repair in the install folder', '安装目录里为 AI 修复安装的 Pi'}" Foreground="{DynamicResource SubText}"
+                                               Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                                <CheckBox Grid.Column="2" Style="{StaticResource Toggle}" IsChecked="{Binding OptRemovePi}"/>
+                            </Grid>
+                        </Border>
                         <TextBlock Text="{Binding UninstallNote}" Foreground="{DynamicResource SubText}" TextWrapping="Wrap"
                                    LineHeight="20" Margin="8,14,8,0"/>
                     </StackPanel>

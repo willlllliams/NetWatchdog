@@ -556,12 +556,27 @@
                                         <Border Style="{StaticResource RowDivider}"/>
                                         <Grid Margin="14,10">
                                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                             <StackPanel Margin="0,0,12,0">
                                                 <TextBlock Style="{StaticResource RowTitle}" Text="Pi"/>
                                                 <TextBlock Style="{StaticResource RowDetail}" Text="{Binding AiPiText}" Foreground="{Binding AiPiBrush}"/>
                                             </StackPanel>
                                             <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="aipi" VerticalAlignment="Center"
                                                     Content="{Binding AiPiAction}" Visibility="{Binding AiPiActionVisibility}"/>
+                                            <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Visibility="{Binding AiPiExtraVisibility}">
+                                                <StackPanel Orientation="Horizontal" Margin="-6,6,0,0">
+                                                    <Button Style="{StaticResource LinkButton}" Tag="aipiopen" Content="{local:Tr 'Open Pi', '进入 Pi'}"
+                                                            ToolTip="{local:Tr 'Opens a command prompt with pi on its PATH', '打开命令行窗口，其中可以直接运行 pi'}"/>
+                                                    <Button Style="{StaticResource LinkButton}" Tag="aipiremove" Margin="8,0,0,0" Content="{local:Tr 'Uninstall Pi', '卸载 Pi'}"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding AiPiDirText}" Foreground="{DynamicResource SubText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                                <TextBlock Text="{Binding AiPiDirHint}" Foreground="{DynamicResource SubText}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                                <StackPanel Orientation="Horizontal" Margin="-6,2,0,0">
+                                                    <Button Style="{StaticResource LinkButton}" Tag="aipidir" Content="{local:Tr 'Change folder', '更改目录'}"/>
+                                                    <Button Style="{StaticResource LinkButton}" Tag="aipidirreset" Margin="8,0,0,0"
+                                                            Content="{local:Tr 'Reset folder', '恢复默认目录'}" Visibility="{Binding AiPiDirResetVisibility}"/>
+                                                </StackPanel>
+                                            </StackPanel>
                                         </Grid>
                                         <Border Style="{StaticResource RowDivider}"/>
                                         <Grid Margin="14,10">
