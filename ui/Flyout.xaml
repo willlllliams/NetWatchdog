@@ -44,22 +44,68 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <!-- Header of the main page: title, status line, refresh and settings buttons -->
-            <Grid Grid.Row="0" Margin="20,14,12,12" Visibility="{Binding MainVisibility}">
-                <StackPanel Margin="0,2,76,0">
-                    <TextBlock Text="{local:Tr 'NetWatchdog', '网络看门狗'}" FontSize="15" FontWeight="Bold"/>
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <Ellipse Width="8" Height="8" Fill="{Binding HeroBrush}" VerticalAlignment="Center"/>
-                        <TextBlock Text="{Binding StatusLine}" Foreground="{DynamicResource SubText}" Margin="8,0,0,0"
-                                   TextTrimming="CharacterEllipsis" MaxWidth="230" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </StackPanel>
+            <!-- Header of the main page: title and buttons (language, theme, refresh, settings), status line below -->
+            <Grid Grid.Row="0" Margin="20,10,12,12" Visibility="{Binding MainVisibility}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="34"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="{local:Tr 'NetWatchdog', '网络看门狗'}" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <Button Style="{StaticResource IconButton}" Tag="menu:lang" Content="&#xE774;"
+                            ToolTip="{local:Tr 'Language', '语言'}"/>
+                    <Button Style="{StaticResource IconButton}" Tag="menu:theme" Content="&#xE793;"
+                            ToolTip="{local:Tr 'Theme', '主题'}"/>
                     <Button Style="{StaticResource IconButton}" Tag="probe" Content="&#xE72C;"
                             ToolTip="{local:Tr 'Check again now', '立即重新检测'}"/>
                     <Button Style="{StaticResource IconButton}" Tag="settings" Content="&#xE713;"
                             ToolTip="{local:Tr 'Settings', '设置'}"/>
                 </StackPanel>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,8,0">
+                    <Ellipse Width="8" Height="8" Fill="{Binding HeroBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding StatusLine}" Foreground="{DynamicResource SubText}" Margin="8,0,0,0"
+                               TextTrimming="CharacterEllipsis" MaxWidth="296" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Menus of the language and theme buttons; the panel opens them next to the clicked button -->
+                <Popup x:Name="LangPopup" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+                    <Border Margin="12" Width="190" Padding="4" CornerRadius="8" BorderThickness="1" TextElement.FontSize="12"
+                            BorderBrush="{DynamicResource Stroke}">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.3"/>
+                        </Border.Effect>
+                        <StackPanel>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menulang" Tag="lang:auto"
+                                         IsChecked="{Binding LangAuto, Mode=OneWay}" Content="{local:Tr 'Follow system', '跟随系统'}"/>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menulang" Tag="lang:zh"
+                                         IsChecked="{Binding LangZh, Mode=OneWay}" Content="简体中文"/>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menulang" Tag="lang:zh-TW"
+                                         IsChecked="{Binding LangZhTw, Mode=OneWay}" Content="繁體中文"/>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menulang" Tag="lang:en"
+                                         IsChecked="{Binding LangEn, Mode=OneWay}" Content="English"/>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menulang" Tag="lang:ja"
+                                         IsChecked="{Binding LangJa, Mode=OneWay}" Content="日本語"/>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menulang" Tag="lang:ko"
+                                         IsChecked="{Binding LangKo, Mode=OneWay}" Content="한국어"/>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+                <Popup x:Name="ThemePopup" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+                    <Border Margin="12" Width="190" Padding="4" CornerRadius="8" BorderThickness="1" TextElement.FontSize="12"
+                            BorderBrush="{DynamicResource Stroke}">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.3"/>
+                        </Border.Effect>
+                        <StackPanel>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menutheme" Tag="theme:system"
+                                         IsChecked="{Binding ThemeSystem, Mode=OneWay}" Content="{local:Tr 'Follow system', '跟随系统'}"/>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menutheme" Tag="theme:light"
+                                         IsChecked="{Binding ThemeLight, Mode=OneWay}" Content="{local:Tr 'Light', '浅色'}"/>
+                            <RadioButton Style="{StaticResource OptionRow}" GroupName="menutheme" Tag="theme:dark"
+                                         IsChecked="{Binding ThemeDark, Mode=OneWay}" Content="{local:Tr 'Dark', '深色'}"/>
+                        </StackPanel>
+                    </Border>
+                </Popup>
             </Grid>
 
             <!-- Header of the settings page: back button and title -->
@@ -191,18 +237,28 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Border Margin="12,0,12,12" Padding="2" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource Stroke}">
-                        <UniformGrid Rows="1">
-                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:general"
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.3*"/>
+                                <ColumnDefinition Width="1.3*"/>
+                                <ColumnDefinition Width="1*"/>
+                                <ColumnDefinition Width="1.15*"/>
+                                <ColumnDefinition Width="0.75*"/>
+                                <ColumnDefinition Width="1*"/>
+                            </Grid.ColumnDefinitions>
+                            <RadioButton Grid.Column="0" Padding="4,4" Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:general"
                                          IsChecked="{Binding TabGeneral, Mode=OneWay}" Content="{local:Tr 'General', '常规'}"/>
-                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:probe"
+                            <RadioButton Grid.Column="1" Padding="4,4" Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:probe"
                                          IsChecked="{Binding TabProbe, Mode=OneWay}" Content="{local:Tr 'Probing', '探测'}"/>
-                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:wifi"
+                            <RadioButton Grid.Column="2" Padding="4,4" Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:wifi"
                                          IsChecked="{Binding TabWifi, Mode=OneWay}" Content="Wi-Fi"/>
-                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:repair"
+                            <RadioButton Grid.Column="3" Padding="4,4" Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:repair"
                                          IsChecked="{Binding TabRepair, Mode=OneWay}" Content="{local:Tr 'Repair', '修复'}"/>
-                            <RadioButton Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:more"
+                            <RadioButton Grid.Column="4" Padding="4,4" Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:ai"
+                                         IsChecked="{Binding TabAi, Mode=OneWay}" Content="AI"/>
+                            <RadioButton Grid.Column="5" Padding="4,4" Style="{StaticResource Segment}" GroupName="tabs" Tag="tab:more"
                                          IsChecked="{Binding TabMore, Mode=OneWay}" Content="{local:Tr 'More', '更多'}"/>
-                        </UniformGrid>
+                        </Grid>
                     </Border>
                     <ScrollViewer x:Name="SettingsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled" Focusable="False">
@@ -480,28 +536,213 @@
                                 <TextBlock Foreground="{DynamicResource SubText}" TextWrapping="Wrap" LineHeight="18" Margin="8,10,8,0"
                                            Text="{local:Tr 'Repairs marked as changing system settings need administrator approval the first time they are turned on. Repair commands come from NetAdapter Repair All In One by Conner Bernhard (MIT).', '标为“会修改系统设置”的修复，第一次开启时需要管理员确认。修复命令取自 Conner Bernhard 的 NetAdapter Repair All In One（MIT 许可证）。'}"/>
                             </StackPanel>
+                            <StackPanel Visibility="{Binding TabAiVisibility}">
+                                <TextBlock Foreground="{DynamicResource SubText}" TextWrapping="Wrap" LineHeight="18" Margin="8,0,8,10"
+                                           Text="{local:Tr 'When the outage has lasted the time set below, the watchdog starts the Pi coding agent as SYSTEM and lets a local AI model find and fix the cause. Pi is the only required part; any local AI service with an OpenAI-compatible API works.', '断网达到下面设定的时长后，看门狗以 SYSTEM 身份启动 Pi，让本地大模型查找并修复断网原因。必装的只有 Pi，本地 AI 服务可以任选，只要提供兼容 OpenAI 的接口。'}"/>
+                                <Grid Height="22" Margin="8,0,4,6">
+                                    <TextBlock Text="{local:Tr 'Components', '组件'}" Style="{StaticResource SectionTitle}"/>
+                                </Grid>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <Grid Margin="14,10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="Node.js"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{Binding AiNodeText}" Foreground="{Binding AiNodeBrush}"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="ainode" VerticalAlignment="Center"
+                                                    Content="{Binding AiNodeAction}" Visibility="{Binding AiNodeActionVisibility}"/>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <Grid Margin="14,10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="Pi"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{Binding AiPiText}" Foreground="{Binding AiPiBrush}"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Style="{StaticResource ActionButton}" Tag="aipi" VerticalAlignment="Center"
+                                                    Content="{Binding AiPiAction}" Visibility="{Binding AiPiActionVisibility}"/>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <Grid Margin="14,10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Use the npmmirror registry', '使用 npmmirror 镜像'}"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Faster downloads in mainland China', '国内网络下载更快'}"/>
+                                            </StackPanel>
+                                            <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="aimirror" IsChecked="{Binding AiMirror, Mode=OneWay}"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <Grid Height="22" Margin="8,12,4,6">
+                                    <TextBlock Text="{local:Tr 'Local AI service', '本地 AI 服务'}" Style="{StaticResource SectionTitle}"/>
+                                </Grid>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel Margin="14,12">
+                                        <Border Padding="2" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource Stroke}">
+                                            <UniformGrid Rows="1">
+                                                <RadioButton Style="{StaticResource Segment}" GroupName="aisvc" Tag="aisvc:ollama" IsChecked="{Binding AiSvcOllama, Mode=OneWay}" Content="Ollama"/>
+                                                <RadioButton Style="{StaticResource Segment}" GroupName="aisvc" Tag="aisvc:lmstudio" IsChecked="{Binding AiSvcLmStudio, Mode=OneWay}" Content="LM Studio"/>
+                                                <RadioButton Style="{StaticResource Segment}" GroupName="aisvc" Tag="aisvc:llamacpp" IsChecked="{Binding AiSvcLlamaCpp, Mode=OneWay}" Content="llama.cpp"/>
+                                                <RadioButton Style="{StaticResource Segment}" GroupName="aisvc" Tag="aisvc:custom" IsChecked="{Binding AiSvcCustom, Mode=OneWay}" Content="{local:Tr 'Custom', '自定义'}"/>
+                                            </UniformGrid>
+                                        </Border>
+                                        <TextBlock Margin="0,12,0,4" Foreground="{DynamicResource SubText}" Text="{local:Tr 'API address', '接口地址'}"/>
+                                        <TextBox x:Name="AiUrlBox" Style="{StaticResource InputBox}" Tag="http://localhost:11434/v1"
+                                                 Text="{Binding AiUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <TextBlock Margin="0,10,0,4" Foreground="{DynamicResource SubText}" Text="{local:Tr 'API key (optional)', 'API Key（可选）'}"/>
+                                        <PasswordBox x:Name="AiKeyBox" Style="{StaticResource InputPassword}"/>
+                                        <TextBlock Margin="0,10,0,4" Foreground="{DynamicResource SubText}" Text="{local:Tr 'Model', '模型'}"/>
+                                        <TextBox x:Name="AiModelBox" Style="{StaticResource InputBox}" Tag="{local:Tr 'Model ID, or pick one after Test', '模型 ID，也可以测试后从列表中选'}"
+                                                 Text="{Binding AiModel, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <ItemsControl ItemsSource="{Binding AiModels}" Focusable="False" Margin="-6,4,0,0">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Button Style="{StaticResource LinkButton}" Tag="aimodel" Content="{Binding}"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding AiServiceHint}" Foreground="{Binding AiServiceHintBrush}"
+                                                   Visibility="{Binding AiServiceHintVisibility}"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                            <Button Style="{StaticResource ActionButton}" Tag="aitest" Content="{local:Tr 'Test', '测试连接'}"/>
+                                            <Button Style="{StaticResource AccentButton}" Height="32" Tag="aisave" Margin="8,0,0,0" Content="{local:Tr 'Save', '保存'}"/>
+                                        </StackPanel>
+                                        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{DynamicResource SubText}" Text="{Binding AiSavedText}"/>
+                                    </StackPanel>
+                                </Border>
+                                <Grid Height="22" Margin="8,12,4,6">
+                                    <TextBlock Text="{local:Tr 'Custom prompt', '自定义提示词'}" Style="{StaticResource SectionTitle}"/>
+                                </Grid>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel Margin="14,12">
+                                        <TextBlock Foreground="{DynamicResource SubText}" TextWrapping="Wrap" LineHeight="18" Margin="0,0,0,8"
+                                                   Text="{local:Tr 'Added after the built-in instructions, for example what this network looks like or what the AI must not touch. Saving asks for administrator approval, so no other program can change what the AI is told.', '追加在内置提示词之后，例如说明这里的网络环境，或者 AI 不能碰的东西。保存时需要管理员确认，其他程序无法改写 AI 收到的指令。'}"/>
+                                        <TextBox x:Name="AiPromptBox" Style="{StaticResource InputArea}" Height="120"
+                                                 Tag="{local:Tr 'e.g. The router is at 192.168.1.1. Never change the VPN adapter.', '例如：路由器地址是 192.168.1.1；不要改动 VPN 网卡。'}"
+                                                 Text="{Binding AiPrompt, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <Grid Margin="0,10,0,0">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" Foreground="{Binding AiPromptBrush}" Text="{Binding AiPromptText}"/>
+                                            <Button Grid.Column="1" Style="{StaticResource AccentButton}" Height="32" Tag="aisaveprompt"
+                                                    Content="{local:Tr 'Save prompt', '保存提示词'}"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <Grid Height="22" Margin="8,12,4,6">
+                                    <TextBlock Text="{local:Tr 'AI repair mode', 'AI 修复模式'}" Style="{StaticResource SectionTitle}"/>
+                                </Grid>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <Grid Margin="14,12">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Foreground="{DynamicResource Bad}" Text="{local:Tr 'AI repair mode', 'AI 修复模式'}"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{Binding AiModeText}"/>
+                                            </StackPanel>
+                                            <CheckBox Grid.Column="1" Style="{StaticResource Toggle}" Tag="aitoggle" VerticalAlignment="Center"
+                                                      IsChecked="{Binding AiOn, Mode=OneWay}" Opacity="{Binding AiToggleOpacity}"/>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <Grid Margin="14,10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Start after', '断网多久后启动'}"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Outage length before the AI starts', '从断网开始计时'}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Style="{StaticResource StepButton}" Tag="aidec" Content="&#xE949;"/>
+                                                <TextBlock Text="{Binding AiAfterText}" Width="60" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                <Button Style="{StaticResource StepButton}" Tag="aiinc" Content="&#xE948;"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <Grid Margin="14,10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Time limit', '最长运行时间'}"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'The AI is stopped after this long', '超过这个时间强制结束 AI'}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Style="{StaticResource StepButton}" Tag="dec:aiMaxMinutes" Content="&#xE949;"/>
+                                                <TextBlock Text="{Binding AiMaxText}" Width="60" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                <Button Style="{StaticResource StepButton}" Tag="inc:aiMaxMinutes" Content="&#xE948;"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <Grid Margin="14,10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Cooldown while still offline', '仍断网时的冷却'}"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Before the AI runs again in the same outage', '同一次断网里再次启动前的间隔'}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Style="{StaticResource StepButton}" Tag="aicdoffdec" Content="&#xE949;"/>
+                                                <TextBlock Text="{Binding AiCdOfflineText}" Width="60" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                <Button Style="{StaticResource StepButton}" Tag="aicdoffinc" Content="&#xE948;"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <Grid Margin="14,10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,12,0">
+                                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Cooldown after recovery', '恢复过网络后的冷却'}"/>
+                                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Before the AI runs in a new outage', '新的断网里再次启动前的间隔'}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Style="{StaticResource StepButton}" Tag="aicdondec" Content="&#xE949;"/>
+                                                <TextBlock Text="{Binding AiCdOnlineText}" Width="60" TextAlignment="Center" VerticalAlignment="Center"/>
+                                                <Button Style="{StaticResource StepButton}" Tag="aicdoninc" Content="&#xE948;"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <Border Style="{StaticResource RowDivider}"/>
+                                        <StackPanel Orientation="Horizontal" Margin="8">
+                                            <Button Style="{StaticResource LinkButton}" Tag="aistop" Visibility="{Binding AiStopVisibility}"
+                                                    Content="{local:Tr 'Stop the AI', '结束 AI'}"/>
+                                            <Button Style="{StaticResource LinkButton}" Tag="ailog" Content="{local:Tr 'AI log', 'AI 日志'}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <TextBlock Foreground="{DynamicResource Bad}" TextWrapping="Wrap" LineHeight="18" Margin="8,10,8,0"
+                                           Text="{local:Tr 'AI will run any command with administrator rights. It may delete files, change system settings and leave Windows unable to start. Automatic switching is paused while the mode is on.', 'AI 将以管理员权限执行任意命令，可能删除文件、修改系统设置、导致系统无法启动；开启期间自动切换暂停。'}"/>
+                                <TextBlock Foreground="{DynamicResource SubText}" TextWrapping="Wrap" LineHeight="18" Margin="8,6,8,0"
+                                           Text="{local:Tr 'Pi is installed into the NetWatchdog folder in Program Files and its settings are kept in the data folder, both writable only by administrators, so another program cannot change what runs with full rights. Pi: github.com/earendil-works/pi (MIT).', 'Pi 安装在 Program Files 下的网络看门狗目录，配置保存在数据目录，两处都只有管理员能改，其他程序无法篡改以最高权限运行的内容。Pi 项目：github.com/earendil-works/pi（MIT 许可证）。'}"/>
+                            </StackPanel>
                             <StackPanel Visibility="{Binding TabMoreVisibility}">
                     <Grid Height="22" Margin="8,0,4,6">
+                        <TextBlock Text="{local:Tr 'Language', '语言'}" Style="{StaticResource SectionTitle}"/>
+                    </Grid>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <StackPanel Margin="14,12,14,4">
+                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Panel and log language', '面板和日志的语言'}"/>
+                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'The panel, the recent events and the log use this language', '面板、最近事件和日志都使用这种语言'}"/>
+                            </StackPanel>
+                            <StackPanel Margin="6,0,6,6">
+                                <RadioButton Style="{StaticResource OptionRow}" GroupName="lang" Tag="lang:auto"
+                                             IsChecked="{Binding LangAuto, Mode=OneWay}" Content="{local:Tr 'Follow system', '跟随系统'}"/>
+                                <RadioButton Style="{StaticResource OptionRow}" GroupName="lang" Tag="lang:zh"
+                                             IsChecked="{Binding LangZh, Mode=OneWay}" Content="简体中文"/>
+                                <RadioButton Style="{StaticResource OptionRow}" GroupName="lang" Tag="lang:zh-TW"
+                                             IsChecked="{Binding LangZhTw, Mode=OneWay}" Content="繁體中文"/>
+                                <RadioButton Style="{StaticResource OptionRow}" GroupName="lang" Tag="lang:en"
+                                             IsChecked="{Binding LangEn, Mode=OneWay}" Content="English"/>
+                                <RadioButton Style="{StaticResource OptionRow}" GroupName="lang" Tag="lang:ja"
+                                             IsChecked="{Binding LangJa, Mode=OneWay}" Content="日本語"/>
+                                <RadioButton Style="{StaticResource OptionRow}" GroupName="lang" Tag="lang:ko"
+                                             IsChecked="{Binding LangKo, Mode=OneWay}" Content="한국어"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Height="22" Margin="8,16,4,6">
                         <TextBlock Text="{local:Tr 'Log', '日志'}" Style="{StaticResource SectionTitle}"/>
                     </Grid>
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
-                            <StackPanel Margin="14,12">
-                                <TextBlock Style="{StaticResource RowTitle}" Text="{local:Tr 'Log language', '日志语言'}"/>
-                                <TextBlock Style="{StaticResource RowDetail}" Text="{local:Tr 'Recent events show the log in this language', '最近事件也以这种语言显示'}"/>
-                                <Border Margin="0,10,0,0" Padding="2" CornerRadius="6" BorderThickness="1"
-                                        BorderBrush="{DynamicResource Stroke}" HorizontalAlignment="Left">
-                                    <StackPanel Orientation="Horizontal">
-                                        <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:auto"
-                                                     IsChecked="{Binding LangAuto, Mode=OneWay}" Content="{local:Tr 'System', '跟随系统'}"/>
-                                        <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:zh"
-                                                     IsChecked="{Binding LangZh, Mode=OneWay}" Content="中文"/>
-                                        <RadioButton Style="{StaticResource Segment}" GroupName="lang" Tag="lang:en"
-                                                     IsChecked="{Binding LangEn, Mode=OneWay}" Content="English"/>
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-                            <Border Style="{StaticResource RowDivider}"/>
                             <StackPanel Orientation="Horizontal" Margin="8">
                                 <Button Style="{StaticResource LinkButton}" Tag="log" Content="{local:Tr 'Open log', '打开日志'}"/>
                                 <Button Style="{StaticResource LinkButton}" Tag="datafolder" Margin="8,0,0,0"

@@ -113,10 +113,16 @@ namespace NetRepair
             {
                 using (var p = Process.Start(psi))
                 {
-                    string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-                    if (!p.WaitForExit(120000)) { try { p.Kill(); } catch { } }
-                    bool failed = output.ToLowerInvariant().Contains("error ") || (p.HasExited && p.ExitCode != 0);
-                    Log("  " + Path.GetFileName(exe) + " " + args + (failed ? "  -> FAILED (exit " + p.ExitCode + ")" : "  -> ok"));
+                    // Both streams are read in the background: reading one to the end first can deadlock when the
+                    // other fills its pipe, and a blocking read would make the time limit below useless
+                    var outText = p.StandardOutput.ReadToEndAsync();
+                    var errText = p.StandardError.ReadToEndAsync();
+                    bool exited = p.WaitForExit(120000);
+                    if (!exited) { try { p.Kill(); } catch { } p.WaitForExit(5000); }
+                    string output = (outText.Wait(5000) ? outText.Result : "") + (errText.Wait(5000) ? errText.Result : "");
+                    bool failed = !exited || output.ToLowerInvariant().Contains("error ") || p.ExitCode != 0;
+                    string code = exited ? p.ExitCode.ToString() : "timeout";
+                    Log("  " + Path.GetFileName(exe) + " " + args + (failed ? "  -> FAILED (exit " + code + ")" : "  -> ok"));
                     if (failed) { failures++; foreach (var l in output.Trim().Split('\n').Take(5)) Log("    " + l.TrimEnd('\r')); }
                 }
             }
@@ -164,7 +170,7 @@ namespace NetRepair
         static void ResetProxy()
         {
             Run(Sys("netsh.exe"), "winhttp reset proxy");
-            foreach (var sid in Registry.Users.GetSubKeyNames().Where(n => n.StartsWith("S-1-5-21-") && !n.EndsWith("_Classes")))
+            foreach (var sid in Registry.Users.GetSubKeyNames().Where(n => (n.StartsWith("S-1-5-21-") || n.StartsWith("S-1-12-1-")) && !n.EndsWith("_Classes")))
             {
                 string path = sid + @"\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
                 if (dryRun) { Log("  would turn off the proxy for " + sid); continue; }

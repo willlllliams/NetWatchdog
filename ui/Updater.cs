@@ -28,7 +28,7 @@ namespace NetWatchdogUI
 
     static class Updater
     {
-        const string SettingsKey = @"Software\NetWatchdog";
+        const string SettingsKey = AppPaths.UserKey;
 
         // Overridable with --update-url for testing (a file:// URL to a JSON file works too)
         public static string ApiUrl = "https://api.github.com/repos/" + AppInfo.Repo + "/releases/latest";
@@ -121,14 +121,14 @@ namespace NetWatchdogUI
             return r != null && r.Version > Version.Parse(AppInfo.Version);
         }
 
-        // Download the installer into %TEMP%\NetWatchdog-update and verify size and SHA-256.
-        // Runs on a background thread; progress reports 0-100.
+        // Download the installer into a new folder with a random name under %TEMP% and verify size and SHA-256.
+        // Runs on a background thread; progress reports 0-100. Start it with Launch, which checks it again.
         public static string Download(ReleaseInfo r, Action<int> progress)
         {
             if (r.AssetUrl == null) throw new InvalidOperationException(L.T("The release has no installer attached.", "这个版本没有附带安装包。"));
             if (r.Sha256 == null) throw new InvalidOperationException(L.T("The release does not publish a SHA-256 hash, so the download cannot be verified.", "这个版本没有公布 SHA-256 校验值，无法校验下载的文件。"));
 
-            string dir = Path.Combine(Path.GetTempPath(), "NetWatchdog-update");
+            string dir = Path.Combine(Path.GetTempPath(), "NetWatchdog-update-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             string path = Path.Combine(dir, Path.GetFileName(r.AssetName));
             string tmp = path + ".part";
@@ -165,6 +165,26 @@ namespace NetWatchdogUI
             if (File.Exists(path)) File.Delete(path);
             File.Move(tmp, path);
             return path;
+        }
+
+        // Holds the file open against writes while hashing it once more and starting it, so another program cannot
+        // swap the verified installer between the check and the start
+        public static void Launch(string path, string sha256)
+        {
+            using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                string hash;
+                using (var sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(f)).Replace("-", "").ToLowerInvariant();
+                if (hash != sha256)
+                    throw new InvalidDataException(L.T("The SHA-256 of the download does not match the release; the file was deleted.", "下载文件的 SHA-256 与发布信息不一致，已删除该文件。"));
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            }
+        }
+
+        // The release page from the API response is opened only when it is a page of this repository on GitHub
+        public static bool IsReleasePage(string url)
+        {
+            return url != null && url.StartsWith("https://github.com/" + AppInfo.Repo + "/", StringComparison.OrdinalIgnoreCase);
         }
 
         public static string Sha256Of(string path)

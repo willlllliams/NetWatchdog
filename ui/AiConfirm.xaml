@@ -1,0 +1,30 @@
+<!-- Confirmation before AI repair mode is turned on: the risk phrase has to be typed, pasting is blocked in code -->
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:NetWatchdogUI"
+        Title="{local:Tr 'Turn on AI repair mode', '开启 AI 修复模式'}" Width="420" SizeToContent="Height"
+        ResizeMode="NoResize" ShowInTaskbar="True" Topmost="True" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Bg}" Foreground="{DynamicResource Text}"
+        FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI" FontSize="12"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <StackPanel Margin="20,18,20,18">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE7BA;" FontSize="20" Foreground="{DynamicResource Bad}"
+                       VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <TextBlock Text="{local:Tr 'Turn on AI repair mode', '开启 AI 修复模式'}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        </StackPanel>
+        <Border Margin="0,14,0,0" Padding="12,10" CornerRadius="6" Background="{DynamicResource BadSoft}">
+            <TextBlock TextWrapping="Wrap" LineHeight="20" Foreground="{DynamicResource Text}"
+                       Text="{local:Tr 'AI will run any command with administrator rights. It may delete files, change system settings and leave Windows unable to start. Automatic switching is paused while the mode is on.', 'AI 将以管理员权限执行任意命令，可能删除文件、修改系统设置、导致系统无法启动；开启期间自动切换暂停。'}"/>
+        </Border>
+        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="18" Foreground="{DynamicResource SubText}"
+                   Text="{local:Tr 'External content the AI reads, such as the names of nearby Wi-Fi networks or web pages, can also lead it to run commands.', '附近 Wi-Fi 的名称、网页内容等 AI 读到的外部信息，也可能诱导它执行命令。'}"/>
+        <TextBlock Margin="0,16,0,6" TextWrapping="Wrap" x:Name="PhrasePrompt"/>
+        <TextBox x:Name="Phrase" Style="{StaticResource InputBox}" Tag=""/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button x:Name="Cancel" Style="{StaticResource ActionButton}" Content="{local:Tr 'Cancel', '取消'}" IsCancel="True"/>
+            <Button x:Name="Confirm" Style="{StaticResource AccentButton}" Height="32" Margin="8,0,0,0" IsEnabled="False"
+                    Background="{DynamicResource Bad}" Content="{local:Tr 'Turn on', '开启'}"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -39,7 +40,7 @@ namespace NetWatchdogUI
 
     class Options
     {
-        public bool Tray;
+        public bool Tray, LangForced;
         public string Snapshot;
         public bool? ForceDark;
         public string StatusPath;
@@ -49,7 +50,7 @@ namespace NetWatchdogUI
         public static Options Parse(string[] args)
         {
             var o = new Options();
-            o.StatusPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "NetWatchdog", "status.json");
+            o.StatusPath = Path.Combine(AppPaths.DataDir, "status.json");
             for (int i = 0; i < args.Length; i++)
             {
                 string a = args[i].ToLowerInvariant();
@@ -58,7 +59,7 @@ namespace NetWatchdogUI
                 else if (a == "--light") o.ForceDark = false;
                 else if (a == "--snapshot" && i + 1 < args.Length) o.Snapshot = args[++i];
                 else if (a == "--status" && i + 1 < args.Length) o.StatusPath = args[++i];
-                else if (a == "--lang" && i + 1 < args.Length) L.Init(args[++i].ToLowerInvariant());
+                else if (a == "--lang" && i + 1 < args.Length) { L.Init(args[++i]); o.LangForced = true; }
                 else if (a == "--update-url" && i + 1 < args.Length) o.UpdateUrl = args[++i];
                 else if (a == "--check-update") o.CheckUpdate = true;
                 else if (a == "--page" && i + 1 < args.Length) o.Page = args[++i].ToLowerInvariant();
@@ -72,9 +73,19 @@ namespace NetWatchdogUI
         [STAThread]
         static int Main(string[] args)
         {
-            // Elevated helper: started through UAC by the panel to approve a system-changing repair
-            if (args.Length == 2 && args[0] == "--allow-repair") return AllowRepair(args[1]);
+            // Elevated helpers started through UAC by the panel: --allow-repair approves a system-changing repair,
+            // --save-ai writes the AI service and prompt into the administrator-only folder. They never fall
+            // through to a normal start, whatever arguments they get.
+            if (args.Length > 0 && (args[0] == "--allow-repair" || args[0] == "--save-ai"))
+            {
+                if (args[0] == "--allow-repair") return args.Length == 2 ? AllowRepair(args[1]) : 2;
+                return args.Length == 3 ? AiSetup.Save(args[1], args[2]) : 2;
+            }
             var opt = Options.Parse(args);
+            // The panel speaks the language set in the watchdog (More tab, main page menu); without --lang
+            if (!opt.LangForced) L.Init(PeekLanguage(opt.StatusPath));
+            // Started at sign-in while AI repair mode is on
+            if (args.Length >= 1 && args[0] == "--ai-reminder") return AiSetup.Reminder(opt.StatusPath);
             Mutex mutex = null;
             EventWaitHandle showEvent = null;
             if (opt.Snapshot == null)
@@ -100,7 +111,22 @@ namespace NetWatchdogUI
             return 0;
         }
 
-        public static readonly string[] AdminRepairs = { "proxy", "dhcp", "hosts", "tcpip", "reboot", "netreset" };
+        // The "language" setting in effect, as the watchdog last wrote it to status.json: auto, zh, zh-TW, en, ja or ko.
+        // null when there is no status file yet (the Windows display language applies then).
+        static string PeekLanguage(string statusPath)
+        {
+            try
+            {
+                var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(statusPath, Encoding.UTF8)) as Dictionary<string, object>;
+                object so, lang;
+                var sd = d != null && d.TryGetValue("settings", out so) ? so as Dictionary<string, object> : null;
+                if (sd != null && sd.TryGetValue("language", out lang) && lang is string) return (string)lang;
+            }
+            catch { }
+            return null;
+        }
+
+        public static readonly string[] AdminRepairs = { "proxy", "dhcp", "hosts", "tcpip", "reboot", "netreset", "ai" };
 
         // Adds the repair to admin-allow.json, which only administrators can write; the watchdog runs
         // system-changing repairs only when they are listed there
@@ -109,17 +135,23 @@ namespace NetWatchdogUI
             if (Array.IndexOf(AdminRepairs, id) < 0) return 2;
             try
             {
-                string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "NetWatchdog", "admin-allow.json");
+                string path = Path.Combine(AppPaths.DataDir, "admin-allow.json");
                 var ser = new JavaScriptSerializer();
-                var ids = new List<string>();
+                Dictionary<string, object> obj = null;
                 if (File.Exists(path))
                 {
-                    var d = ser.DeserializeObject(File.ReadAllText(path)) as Dictionary<string, object>;
-                    object list;
-                    if (d != null && d.TryGetValue("repairs", out list) && list is object[]) ids.AddRange(((object[])list).Select(x => Convert.ToString(x)));
+                    try { obj = ser.DeserializeObject(File.ReadAllText(path)) as Dictionary<string, object>; } catch { }
                 }
+                if (obj == null) obj = new Dictionary<string, object>();
+                var ids = new List<string>();
+                object list;
+                if (obj.TryGetValue("repairs", out list) && list is object[]) ids.AddRange(((object[])list).Select(x => Convert.ToString(x)));
                 if (!ids.Contains(id)) ids.Add(id);
-                File.WriteAllText(path, ser.Serialize(new Dictionary<string, object> { { "repairs", ids.ToArray() } }), new UTF8Encoding(false));
+                obj["repairs"] = ids.ToArray();
+                // The watchdog withdraws an AI approval once AI repair mode is off; this time keeps a fresh one
+                // alive until the panel's request to turn the mode on has arrived. Other fields are kept.
+                if (id == "ai") obj["aiApprovedAt"] = DateTime.Now.ToString("o");
+                AppPaths.WriteAtomic(path, ser.Serialize(obj));
                 return 0;
             }
             catch (Exception ex) { LogError(ex); return 1; }
@@ -159,6 +191,7 @@ namespace NetWatchdogUI
         public List<RepairInfo> Repairs = new List<RepairInfo>();
         public string[] AdminAllowed = new string[0];
         public int RebootMaxPerDay = 3;
+        public int AiMaxMinutes = 10;
 
         public SettingsInfo Clone()
         {
@@ -189,6 +222,7 @@ namespace NetWatchdogUI
                 case "language": return Language;
                 case "repairActions": return Wire(Repairs);
                 case "rebootMaxPerDay": return RebootMaxPerDay;
+                case "aiMaxMinutes": return AiMaxMinutes;
             }
             return null;
         }
@@ -217,6 +251,7 @@ namespace NetWatchdogUI
                     }).ToList();
                     break;
                 case "rebootMaxPerDay": RebootMaxPerDay = (int)v; break;
+                case "aiMaxMinutes": AiMaxMinutes = (int)v; break;
             }
         }
     }
@@ -228,6 +263,15 @@ namespace NetWatchdogUI
         public int After, CdOffline = 86400, CdOnline = 18000;
         public DateTime? LastRun;
         public RepairInfo Clone() { return (RepairInfo)MemberwiseClone(); }
+    }
+
+    // The watchdog's view of AI repair: components, saved service, whether the mode is on and running
+    class AiInfo
+    {
+        public bool On, Running;
+        public DateTime? StartedAt;
+        public string Log, LogDir, PiVersion, PiDir, Node, BaseUrl, Model, Problem, Prompt;
+        public bool HasKey;
     }
 
     class WatchdogStatus
@@ -245,6 +289,7 @@ namespace NetWatchdogUI
         public string[] RepairsDone = new string[0];
         public int WifiBackupCount;
         public DateTime WifiBackupCreated;
+        public AiInfo Ai;
 
         public static WatchdogStatus Load(string path)
         {
@@ -290,6 +335,7 @@ namespace NetWatchdogUI
                 c.Overridden = Arr(sd, "overridden").Select(x => Convert.ToString(x, CultureInfo.InvariantCulture)).ToArray();
                 c.AdminAllowed = Arr(sd, "adminAllowed").Select(x => Convert.ToString(x, CultureInfo.InvariantCulture)).ToArray();
                 c.RebootMaxPerDay = Int(sd, "rebootMaxPerDay") ?? 3;
+                c.AiMaxMinutes = Int(sd, "aiMaxMinutes") ?? 10;
                 foreach (var ro in Arr(sd, "repairActions").OfType<Dictionary<string, object>>())
                 {
                     var last = Date(ro, "lastRun");
@@ -305,6 +351,20 @@ namespace NetWatchdogUI
             var ra = Date(d, "rebootAt");
             if (ra != DateTime.MinValue) s.RebootAt = ra;
             s.RepairsDone = Arr(d, "repairsDone").Select(x => Convert.ToString(x, CultureInfo.InvariantCulture)).ToArray();
+            object aio;
+            var ad = d.TryGetValue("ai", out aio) ? aio as Dictionary<string, object> : null;
+            if (ad != null)
+            {
+                var started = Date(ad, "startedAt");
+                s.Ai = new AiInfo
+                {
+                    On = Bool(ad, "on"), Running = Bool(ad, "running"),
+                    StartedAt = started == DateTime.MinValue ? (DateTime?)null : started,
+                    Log = Str(ad, "log"), LogDir = Str(ad, "logDir"), PiVersion = Str(ad, "piVersion"), PiDir = Str(ad, "piDir"),
+                    Node = Str(ad, "node"), BaseUrl = Str(ad, "baseUrl"), Model = Str(ad, "model"), Problem = Str(ad, "problem"),
+                    Prompt = Str(ad, "prompt") ?? "", HasKey = Bool(ad, "hasKey"),
+                };
+            }
             object wb;
             var wd = d.TryGetValue("wifiBackup", out wb) ? wb as Dictionary<string, object> : null;
             if (wd != null)
@@ -452,7 +512,8 @@ namespace NetWatchdogUI
         Visibility mainV = Visibility.Visible, settingsV = Visibility.Collapsed;
         string settingsSubtitle, versionText, updateStatusText, newTarget = "", failTargetsText, failTargetsHint;
         string timeoutText, intervalText, failThresholdText, recoverText, wifiRetryText, repoText, resetHint;
-        bool autoUpdate, wifiHunt = true, langAuto, langZh, langEn, canReset;
+        bool autoUpdate, wifiHunt = true, canReset;
+        string langSetting = "auto", themeMode = "system";
 
         public readonly ObservableCollection<LineVM> LinesList = new ObservableCollection<LineVM>();
         public readonly ObservableCollection<EventVM> EventsList = new ObservableCollection<EventVM>();
@@ -460,6 +521,52 @@ namespace NetWatchdogUI
         public ObservableCollection<TargetVM> Targets { get { return TargetsList; } }
         public readonly ObservableCollection<RepairVM> RepairsList = new ObservableCollection<RepairVM>();
         public ObservableCollection<RepairVM> Repairs { get { return RepairsList; } }
+        // AI tab
+        string aiNodeText, aiNodeAction, aiPiText, aiPiAction, aiUrl = "", aiModel = "", aiServiceHint, aiSavedText, aiModeText;
+        string aiAfterText, aiMaxText, aiCdOfflineText, aiCdOnlineText, aiSvc = "ollama", aiPrompt = "", aiPromptText;
+        Brush aiPromptBrush;
+        public string AiPrompt { get { return aiPrompt; } set { Set(ref aiPrompt, value); } }
+        public string AiPromptText { get { return aiPromptText; } set { Set(ref aiPromptText, value); } }
+        public Brush AiPromptBrush { get { return aiPromptBrush; } set { Set(ref aiPromptBrush, value); } }
+        Brush aiNodeBrush, aiPiBrush, aiServiceHintBrush;
+        Visibility aiNodeActionVisibility, aiPiActionVisibility, aiServiceHintVisibility = Visibility.Collapsed, aiStopVisibility = Visibility.Collapsed;
+        bool aiMirror, aiOn;
+        double aiToggleOpacity = 1;
+        public readonly ObservableCollection<string> AiModelsList = new ObservableCollection<string>();
+        public ObservableCollection<string> AiModels { get { return AiModelsList; } }
+        public string AiNodeText { get { return aiNodeText; } set { Set(ref aiNodeText, value); } }
+        public string AiNodeAction { get { return aiNodeAction; } set { Set(ref aiNodeAction, value); } }
+        public string AiPiText { get { return aiPiText; } set { Set(ref aiPiText, value); } }
+        public string AiPiAction { get { return aiPiAction; } set { Set(ref aiPiAction, value); } }
+        public string AiUrl { get { return aiUrl; } set { Set(ref aiUrl, value); } }
+        public string AiModel { get { return aiModel; } set { Set(ref aiModel, value); } }
+        public string AiServiceHint { get { return aiServiceHint; } set { Set(ref aiServiceHint, value); } }
+        public string AiSavedText { get { return aiSavedText; } set { Set(ref aiSavedText, value); } }
+        public string AiModeText { get { return aiModeText; } set { Set(ref aiModeText, value); } }
+        public string AiAfterText { get { return aiAfterText; } set { Set(ref aiAfterText, value); } }
+        public string AiMaxText { get { return aiMaxText; } set { Set(ref aiMaxText, value); } }
+        public string AiCdOfflineText { get { return aiCdOfflineText; } set { Set(ref aiCdOfflineText, value); } }
+        public string AiCdOnlineText { get { return aiCdOnlineText; } set { Set(ref aiCdOnlineText, value); } }
+        public Brush AiNodeBrush { get { return aiNodeBrush; } set { Set(ref aiNodeBrush, value); } }
+        public Brush AiPiBrush { get { return aiPiBrush; } set { Set(ref aiPiBrush, value); } }
+        public Brush AiServiceHintBrush { get { return aiServiceHintBrush; } set { Set(ref aiServiceHintBrush, value); } }
+        public Visibility AiNodeActionVisibility { get { return aiNodeActionVisibility; } set { Set(ref aiNodeActionVisibility, value); } }
+        public Visibility AiPiActionVisibility { get { return aiPiActionVisibility; } set { Set(ref aiPiActionVisibility, value); } }
+        public Visibility AiServiceHintVisibility { get { return aiServiceHintVisibility; } set { Set(ref aiServiceHintVisibility, value); } }
+        public Visibility AiStopVisibility { get { return aiStopVisibility; } set { Set(ref aiStopVisibility, value); } }
+        public bool AiMirror { get { return aiMirror; } set { Set(ref aiMirror, value); } }
+        public bool AiOn { get { return aiOn; } set { Set(ref aiOn, value); } }
+        public double AiToggleOpacity { get { return aiToggleOpacity; } set { Set(ref aiToggleOpacity, value); } }
+        public string AiSvc
+        {
+            get { return aiSvc; }
+            set { aiSvc = value; foreach (var n in new[] { "AiSvcOllama", "AiSvcLmStudio", "AiSvcLlamaCpp", "AiSvcCustom" }) Raise(n); }
+        }
+        public bool AiSvcOllama { get { return aiSvc == "ollama"; } }
+        public bool AiSvcLmStudio { get { return aiSvc == "lmstudio"; } }
+        public bool AiSvcLlamaCpp { get { return aiSvc == "llamacpp"; } }
+        public bool AiSvcCustom { get { return aiSvc == "custom"; } }
+
         string rebootMaxText, wifiBackupText;
         Visibility wifiBackupVisibility = Visibility.Collapsed;
         public string RebootMaxText { get { return rebootMaxText; } set { Set(ref rebootMaxText, value); } }
@@ -483,9 +590,35 @@ namespace NetWatchdogUI
         public string ResetHint { get { return resetHint; } set { Set(ref resetHint, value); } }
         public bool AutoUpdate { get { return autoUpdate; } set { Set(ref autoUpdate, value); } }
         public bool WifiHunt { get { return wifiHunt; } set { Set(ref wifiHunt, value); } }
-        public bool LangAuto { get { return langAuto; } set { Set(ref langAuto, value); } }
-        public bool LangZh { get { return langZh; } set { Set(ref langZh, value); } }
-        public bool LangEn { get { return langEn; } set { Set(ref langEn, value); } }
+        // The "language" setting (auto, zh, zh-TW, en, ja, ko) and the theme choice (system, light, dark);
+        // the radio buttons of the main page menus and the More tab show them
+        public string LangSetting
+        {
+            get { return langSetting; }
+            set
+            {
+                langSetting = value;
+                foreach (var n in new[] { "LangAuto", "LangZh", "LangZhTw", "LangEn", "LangJa", "LangKo" }) Raise(n);
+            }
+        }
+        public bool LangAuto { get { return langSetting == "auto"; } }
+        public bool LangZh { get { return langSetting == "zh"; } }
+        public bool LangZhTw { get { return langSetting == "zh-TW"; } }
+        public bool LangEn { get { return langSetting == "en"; } }
+        public bool LangJa { get { return langSetting == "ja"; } }
+        public bool LangKo { get { return langSetting == "ko"; } }
+        public string ThemeMode
+        {
+            get { return themeMode; }
+            set
+            {
+                themeMode = value;
+                foreach (var n in new[] { "ThemeSystem", "ThemeLight", "ThemeDark" }) Raise(n);
+            }
+        }
+        public bool ThemeSystem { get { return themeMode == "system"; } }
+        public bool ThemeLight { get { return themeMode == "light"; } }
+        public bool ThemeDark { get { return themeMode == "dark"; } }
         public bool CanReset { get { return canReset; } set { Set(ref canReset, value); } }
 
         string tab = "general";
@@ -495,8 +628,8 @@ namespace NetWatchdogUI
             set
             {
                 tab = value;
-                foreach (var name in new[] { "TabGeneral", "TabProbe", "TabWifi", "TabRepair", "TabMore",
-                                             "TabGeneralVisibility", "TabProbeVisibility", "TabWifiVisibility", "TabRepairVisibility", "TabMoreVisibility" })
+                foreach (var name in new[] { "TabGeneral", "TabProbe", "TabWifi", "TabRepair", "TabAi", "TabMore",
+                                             "TabGeneralVisibility", "TabProbeVisibility", "TabWifiVisibility", "TabRepairVisibility", "TabAiVisibility", "TabMoreVisibility" })
                     Raise(name);
             }
         }
@@ -505,6 +638,8 @@ namespace NetWatchdogUI
         public bool TabWifi { get { return tab == "wifi"; } }
         public bool TabMore { get { return tab == "more"; } }
         public bool TabRepair { get { return tab == "repair"; } }
+        public bool TabAi { get { return tab == "ai"; } }
+        public Visibility TabAiVisibility { get { return TabAi ? Visibility.Visible : Visibility.Collapsed; } }
         public Visibility TabRepairVisibility { get { return TabRepair ? Visibility.Visible : Visibility.Collapsed; } }
         public Visibility TabGeneralVisibility { get { return TabGeneral ? Visibility.Visible : Visibility.Collapsed; } }
         public Visibility TabProbeVisibility { get { return TabProbe ? Visibility.Visible : Visibility.Collapsed; } }
@@ -699,7 +834,7 @@ namespace NetWatchdogUI
     class Controller
     {
         const string TaskName = "NetWatchdog";
-        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const string RunKey = AppPaths.RunKey;
         const string RunValue = "NetWatchdogUI";
 
         class Pending { public bool Desired; public DateTime Deadline; }
@@ -742,7 +877,19 @@ namespace NetWatchdogUI
             { "recoverThreshold", new[] { 1, 20, 1 } },
             { "wifiRetryMinutes", new[] { 1, 240, 1 } },
             { "rebootMaxPerDay", new[] { 1, 10, 1 } },
+            { "aiMaxMinutes", new[] { 1, 120, 1 } },
         };
+
+        // Language and theme menus on the main page
+        bool reloading, reloadQueued, reloadAfterModal;
+        static readonly string[] MenuPopups = { "LangPopup", "ThemePopup" };
+        readonly Dictionary<string, DateTime> menuClosed = new Dictionary<string, DateTime>();
+
+        // AI tab
+        const string AiReminderValue = "NetWatchdogAIReminder";
+        bool modal, aiFormLoaded, aiHintBad, aiTesting;
+        bool? aiReminderSynced;
+        string aiHint;
 
         // Updates
         ReleaseInfo update;
@@ -760,31 +907,16 @@ namespace NetWatchdogUI
 
         public void Start(EventWaitHandle showEvent)
         {
+            RemoveStaleTempFiles();
             theme = Theme.Load(opt.ForceDark);
-            flyout = LoadFlyout();
-            theme.Apply(flyout.Resources);
-            flyout.DataContext = vm;
-            body = (Grid)flyout.FindName("Body");
-            slide = (TranslateTransform)body.RenderTransform;
-
-            flyout.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(OnClick));
-            flyout.SourceInitialized += (s, e) => Native.StyleFlyout(new WindowInteropHelper(flyout).Handle);
-            flyout.Deactivated += (s, e) => { if (opt.Snapshot == null) HideFlyout(); };
-            flyout.PreviewKeyDown += (s, e) =>
-            {
-                if (e.Key == Key.Escape) HideFlyout();
-                else if (e.Key == Key.Enter && Keyboard.FocusedElement is TextBox) { AddTarget(); e.Handled = true; }
-            };
-            flyout.DpiChanged += (s, e) => flyout.Dispatcher.BeginInvoke(new Action(Fit), DispatcherPriority.Loaded);
-            flyout.Closing += (s, e) => { e.Cancel = true; HideFlyout(); };
+            InstallFlyout(LoadFlyout());
 
             if (opt.Snapshot == null) CreateTray();
 
             vm.AutoStart = ReadAutoStart();
+            vm.AiMirror = L.Zh;
             if (opt.UpdateUrl != null) Updater.ApiUrl = opt.UpdateUrl;
-            lastCheckText = Updater.LastCheck > DateTime.MinValue
-                ? L.F("Last checked {0:yyyy-MM-dd HH:mm}", "上次检查于 {0:yyyy-MM-dd HH:mm}", Updater.LastCheck)
-                : L.T("Not checked yet", "尚未检查");
+            lastCheckText = LastCheckText();
             DateTime due = Updater.LastCheck.AddHours(24), soon = DateTime.Now.AddSeconds(30);
             nextCheck = due < soon ? soon : due;
             if (opt.CheckUpdate) CheckUpdate(false);
@@ -816,12 +948,157 @@ namespace NetWatchdogUI
             return (Window)Xaml.Load("NetWatchdogUI.Flyout.xaml");
         }
 
+        string LastCheckText()
+        {
+            return Updater.LastCheck > DateTime.MinValue
+                ? L.F("Last checked {0:yyyy-MM-dd HH:mm}", "上次检查于 {0:yyyy-MM-dd HH:mm}", Updater.LastCheck)
+                : L.T("Not checked yet", "尚未检查");
+        }
+
+        // Makes w the flyout: theme, fonts, data binding and event handlers
+        void InstallFlyout(Window w)
+        {
+            flyout = w;
+            L.Apply(w);
+            w.DataContext = vm;
+            body = (Grid)w.FindName("Body");
+            slide = (TranslateTransform)body.RenderTransform;
+
+            w.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(OnClick));
+            foreach (var name in new[] { "LangPopup", "ThemePopup" })
+            {
+                var pop = (Popup)w.FindName(name);
+                var content = (FrameworkElement)pop.Child;
+                L.Apply(content);
+
+                // Clicks inside a popup do not bubble up to the window
+                content.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(OnClick));
+                string key = name;
+                pop.Closed += (s, e) => menuClosed[key] = DateTime.Now;
+            }
+            ApplyTheme();
+            // The menus are not part of the window's tree while the markup loads, and "Card" is also the name of a
+            // style: they get their own copy of the brushes (ApplyTheme) and look their background up there
+            foreach (var name in new[] { "LangPopup", "ThemePopup" })
+                ((Border)((Popup)w.FindName(name)).Child).SetResourceReference(Border.BackgroundProperty, "Card");
+            w.SourceInitialized += (s, e) => Native.StyleFlyout(new WindowInteropHelper(w).Handle);
+            w.Deactivated += (s, e) => { if (opt.Snapshot == null && !modal && !reloading && w == flyout) HideFlyout(); };
+            w.PreviewKeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Escape) HideFlyout();
+                else if (e.Key == Key.Enter && Keyboard.FocusedElement == w.FindName("NewTargetBox")) { AddTarget(); e.Handled = true; }
+            };
+            w.DpiChanged += (s, e) => w.Dispatcher.BeginInvoke(new Action(Fit), DispatcherPriority.Loaded);
+            w.Closing += (s, e) => { if (reloading) return; e.Cancel = true; HideFlyout(); };
+        }
+
+        // ------------------------------------------------ Language and theme
+
+        // The markup of the flyout turns its texts into the current language while it loads, so a new language
+        // needs a new window. The old one is replaced in place (same position, same page); the tray menu and the
+        // other texts follow. Runs from the dispatcher, never from inside a handler of the old window.
+        void ReloadLanguage()
+        {
+            reloadQueued = false;
+            if (modal) { reloadAfterModal = true; return; }
+            if (reloading) return;
+            reloading = true;
+            try
+            {
+                var old = flyout;
+                bool visible = old.IsVisible;
+                var aiKey = old.FindName("AiKeyBox") as PasswordBox;
+                string password = aiKey == null ? "" : aiKey.Password;
+                foreach (var name in MenuPopups) ((Popup)old.FindName(name)).IsOpen = false;
+                old.Hide();
+
+                InstallFlyout(LoadFlyout());
+                var key = AiKeyBox;
+                if (key != null) key.Password = password;
+                noticeTitle = null;
+                lastCheckText = LastCheckText();
+                if (tray != null) BuildTrayMenu();
+                Refresh();
+                if (visible) ShowFlyout(anchor, false);
+                old.Close();
+            }
+            catch (Exception ex) { Program.LogError(ex); }
+            finally { reloading = false; }
+            Refresh();
+        }
+
+        // Called with the language setting in effect (after pending changes of this panel); switches the panel
+        // to it when it differs. --lang pins the language of this run.
+        void FollowLanguage(string setting)
+        {
+            if (opt.LangForced || opt.Snapshot != null || reloadQueued) return;
+            string code = L.Normalize(setting);
+            if (code == null || code == L.Lang) return;
+            L.Init(setting);
+            reloadQueued = true;
+            flyout.Dispatcher.BeginInvoke(new Action(ReloadLanguage), DispatcherPriority.Background);
+        }
+
+        void OpenMenu(FrameworkElement button, string popupName)
+        {
+            var pop = (Popup)flyout.FindName(popupName);
+            DateTime closed;
+            // A click on the button while its menu is open first closes the menu (click outside); do not reopen it
+            if (menuClosed.TryGetValue(popupName, out closed) && (DateTime.Now - closed).TotalMilliseconds < 250) return;
+            var other = (Popup)flyout.FindName(popupName == "LangPopup" ? "ThemePopup" : "LangPopup");
+            other.IsOpen = false;
+            pop.PlacementTarget = button;
+            // Right edges aligned; the popup's content has a 12 DIP margin for the shadow
+            pop.HorizontalOffset = button.ActualWidth - (190 + 24) + 12;
+            pop.VerticalOffset = -8;
+            pop.IsOpen = true;
+        }
+
+        void CloseMenus()
+        {
+            foreach (var name in MenuPopups) ((Popup)flyout.FindName(name)).IsOpen = false;
+        }
+
+        void SetThemeMode(string mode)
+        {
+            CloseMenus();
+            Theme.Mode = mode;
+            theme = Theme.Load(opt.ForceDark);
+            ApplyTheme();
+            Refresh();
+        }
+
+        // The brushes go to the window and to the menus, which sit outside the window's tree
+        void ApplyTheme()
+        {
+            theme.Apply(flyout.Resources);
+            foreach (var name in MenuPopups)
+                theme.Apply(((FrameworkElement)((Popup)flyout.FindName(name)).Child).Resources);
+            // The event list keeps its brushes until the log changes; make it rebuild with the new ones
+            logLength = -1;
+        }
+
         // ------------------------------------------------ Tray
 
         void CreateTray()
         {
             tray = new WF.NotifyIcon();
             tray.Text = L.T("NetWatchdog", "网络看门狗");
+            BuildTrayMenu();
+            tray.MouseUp += (s, e) =>
+            {
+                if (e.Button != WF.MouseButtons.Left) return;
+                if (flyout.IsVisible) { HideFlyout(); return; }
+                // Clicking the tray icon first deactivates (and hides) the flyout; don't reopen it on the same click
+                if ((DateTime.Now - hiddenAt).TotalMilliseconds < 300) return;
+                ShowFlyout(WF.Cursor.Position);
+            };
+            UpdateTrayIcon();
+            tray.Visible = true;
+        }
+
+        void BuildTrayMenu()
+        {
             var menu = new WF.ContextMenuStrip();
             menu.Items.Add(L.T("Open panel", "打开面板"), null, (s, e) => ShowFlyout(WF.Cursor.Position));
             menu.Items.Add(L.T("Open log", "打开日志"), null, (s, e) => OpenLog());
@@ -833,17 +1110,9 @@ namespace NetWatchdogUI
             });
             menu.Items.Add(new WF.ToolStripSeparator());
             menu.Items.Add(L.T("Exit", "退出"), null, (s, e) => Exit());
+            var old = tray.ContextMenuStrip;
             tray.ContextMenuStrip = menu;
-            tray.MouseUp += (s, e) =>
-            {
-                if (e.Button != WF.MouseButtons.Left) return;
-                if (flyout.IsVisible) { HideFlyout(); return; }
-                // Clicking the tray icon first deactivates (and hides) the flyout; don't reopen it on the same click
-                if ((DateTime.Now - hiddenAt).TotalMilliseconds < 300) return;
-                ShowFlyout(WF.Cursor.Position);
-            };
-            UpdateTrayIcon();
-            tray.Visible = true;
+            if (old != null) old.Dispose();
         }
 
         void UpdateTrayIcon()
@@ -868,11 +1137,11 @@ namespace NetWatchdogUI
 
         // ------------------------------------------------ Showing and placing the flyout
 
-        void ShowFlyout(System.Drawing.Point at)
+        void ShowFlyout(System.Drawing.Point at, bool animate = true)
         {
             // Like Quick Settings, re-read light/dark mode and the accent color every time the flyout opens
             theme = Theme.Load(opt.ForceDark);
-            theme.Apply(flyout.Resources);
+            ApplyTheme();
             vm.AutoStart = ReadAutoStart();
             Refresh();
 
@@ -883,7 +1152,7 @@ namespace NetWatchdogUI
             Fit();
             flyout.Activate();
             Native.SetForegroundWindow(new WindowInteropHelper(flyout).Handle);
-            if (!wasVisible) Animate();
+            if (!wasVisible && animate) Animate();
         }
 
         const double MaxFlyoutHeight = 640, MinSettingsHeight = 420;
@@ -1031,22 +1300,22 @@ namespace NetWatchdogUI
             switch (kind)
             {
                 case Kind.Normal:
-                    vm.StatusLine = Join(L.T("Online", "网络正常"), L.T("via ", "经由 ") + st.Active, Ms(active == null ? null : active.Latency));
+                    vm.StatusLine = Join(L.T("Online", "网络正常"), L.F("via {0}", "经由 {0}", st.Active), Ms(active == null ? null : active.Latency));
                     vm.HeroBrush = theme["Good"];
                     break;
                 case Kind.Backup:
-                    vm.StatusLine = Join(L.T("On backup line ", "已切换到备用线路 ") + st.Active, Ms(active == null ? null : active.Latency));
+                    vm.StatusLine = Join(L.F("On backup line {0}", "已切换到备用线路 {0}", st.Active), Ms(active == null ? null : active.Latency));
                     vm.HeroBrush = theme["Warn"];
                     break;
                 case Kind.Down:
                     vm.StatusLine = st.AttemptSsid != null
-                        ? L.T("No line has internet · ", "可用的线路都不通 · ") + AttemptText()
+                        ? Join(L.T("No line has internet", "可用的线路都不通"), AttemptText())
                         : L.T("No line has internet, trying to recover", "可用的线路都不通，正在尝试恢复");
                     vm.HeroBrush = theme["Bad"];
                     break;
                 case Kind.Paused:
-                    vm.StatusLine = L.T("Switching paused · Windows is using ", "自动切换已暂停 · 系统正在使用 ") +
-                        (st.RouteOwner ?? L.T("an unknown line", "未知线路"));
+                    vm.StatusLine = L.F("Switching paused · Windows is using {0}", "自动切换已暂停 · 系统正在使用 {0}",
+                        st.RouteOwner ?? L.T("an unknown line", "未知线路"));
                     vm.HeroBrush = theme["Neutral"];
                     break;
                 case Kind.Stale:
@@ -1084,7 +1353,7 @@ namespace NetWatchdogUI
             vm.LinesHint = st != null && st.Lines.Count > 1 ? L.T("In priority order", "按优先级排列") : "";
             UpdateSettings();
             if (st != null && !stale)
-                vm.FooterText = Join(L.T("Running for ", "已运行 ") + Duration(DateTime.Now - st.Started),
+                vm.FooterText = Join(L.F("Running for {0}", "已运行 {0}", Duration(DateTime.Now - st.Started)),
                                      L.F("checks every {0} s", "每 {0} 秒检测", st.Interval));
             else
                 vm.FooterText = L.T("Changes apply immediately", "更改立即生效");
@@ -1110,6 +1379,26 @@ namespace NetWatchdogUI
                 action = L.T("Cancel restart", "取消重启");
                 bannerKind = "cancelreboot";
                 bg = theme["BadSoft"]; fg = theme["Bad"]; glyph = "\uE7E8";
+            }
+            else if (st != null && !stale && st.Ai != null && st.Ai.Running)
+            {
+                int mins = st.Ai.StartedAt.HasValue ? (int)(DateTime.Now - st.Ai.StartedAt.Value).TotalMinutes : 0;
+                int max = st.Settings != null ? st.Settings.AiMaxMinutes : 10;
+                title = L.T("AI is repairing the network", "AI 正在修复网络");
+                detail = L.F("Running for {0} min, at most {1} min. It stops by itself once the network is back.",
+                             "已运行 {0} 分钟，最长 {1} 分钟。网络恢复后会自动结束。", mins, max);
+                action = L.T("Stop", "结束");
+                bannerKind = "stopai";
+                bg = theme["BadSoft"]; fg = theme["Bad"]; glyph = "\uE7BA";
+            }
+            else if (st != null && !stale && st.Ai != null && st.Ai.On)
+            {
+                title = L.T("AI repair mode is on", "AI 修复模式已开启");
+                detail = L.T("Automatic switching is paused. During an outage the AI runs commands with administrator rights.",
+                             "自动切换已暂停。断网时 AI 会以管理员权限执行命令。");
+                action = L.T("Turn off", "关闭");
+                bannerKind = "aioff";
+                bg = theme["BadSoft"]; fg = theme["Bad"]; glyph = "\uE7BA";
             }
             else if (st != null && !stale && st.WifiBackupCount > 0 && !st.OutageSince.HasValue)
             {
@@ -1215,12 +1504,12 @@ namespace NetWatchdogUI
 
                 int samples = l.History.Count(v => v >= -1);
                 int lost = l.History.Count(v => v == -1);
-                string addr = L.T("Address ", "地址 ") + (l.Ip ?? L.T("none", "无"));
+                string addr = L.F("Address {0}", "地址 {0}", l.Ip ?? L.T("none", "无"));
                 x.ChartTip = samples == 0
-                    ? addr + L.T(" · no probe data yet", " · 最近没有可用的探测数据")
-                    : addr + (samples == 1
-                        ? L.F(" · last probe, {1:0}% lost", " · 最近 {0} 次探测，丢包 {1:0}%", samples, 100.0 * lost / samples)
-                        : L.F(" · last {0} probes, {1:0}% lost", " · 最近 {0} 次探测，丢包 {1:0}%", samples, 100.0 * lost / samples));
+                    ? Join(addr, L.T("no probe data yet", "最近没有可用的探测数据"))
+                    : Join(addr, samples == 1
+                        ? L.F("last probe, {1:0}% lost", "最近 {0} 次探测，丢包 {1:0}%", samples, 100.0 * lost / samples)
+                        : L.F("last {0} probes, {1:0}% lost", "最近 {0} 次探测，丢包 {1:0}%", samples, 100.0 * lost / samples));
 
                 bool enabled = l.Enabled;
                 Pending p;
@@ -1360,6 +1649,7 @@ namespace NetWatchdogUI
                 case "tab:wifi":
                 case "tab:more":
                 case "tab:repair":
+                case "tab:ai":
                     ShowTab(tag.Substring(4));
                     break;
                 case "repair": ToggleRepair(fe.DataContext as RepairVM, ((CheckBox)fe).IsChecked == true); break;
@@ -1380,12 +1670,47 @@ namespace NetWatchdogUI
                 case "cdoninc": StepCooldown(fe.DataContext as RepairVM, true, 1); break;
                 case "cdondec": StepCooldown(fe.DataContext as RepairVM, true, -1); break;
                 case "restorewifi": RestoreWifi(); break;
+                case "ainode": InstallNode(); break;
+                case "aipi": InstallPi(); break;
+                case "aimirror": vm.AiMirror = ((CheckBox)fe).IsChecked == true; break;
+                case "aisvc:ollama":
+                case "aisvc:lmstudio":
+                case "aisvc:llamacpp":
+                case "aisvc:custom":
+                {
+                    string svc = tag.Substring(6);
+                    vm.AiSvc = svc;
+                    if (AiSetup.Presets.ContainsKey(svc)) vm.AiUrl = AiSetup.Presets[svc];
+                    vm.AiModelsList.Clear();
+                    aiHint = null;
+                    Refresh();
+                    break;
+                }
+                case "aimodel": vm.AiModel = fe.DataContext as string ?? ""; break;
+                case "aitest": TestAi(); break;
+                case "aisave": SaveAi(); break;
+                case "aisaveprompt": SaveAiPrompt(); break;
+                case "aitoggle": ToggleAi(((CheckBox)fe).IsChecked == true); break;
+                case "aiinc": StepRepairId("ai", 1); break;
+                case "aidec": StepRepairId("ai", -1); break;
+                case "aicdoffinc": StepCooldownId("ai", false, 1); break;
+                case "aicdoffdec": StepCooldownId("ai", false, -1); break;
+                case "aicdoninc": StepCooldownId("ai", true, 1); break;
+                case "aicdondec": StepCooldownId("ai", true, -1); break;
+                case "aistop": SendRequest("stop-ai"); Refresh(); break;
+                case "ailog": OpenAiLog(); break;
                 case "deletewifi":
                 {
-                    var answer = MessageBox.Show(
-                        L.T("Delete the Wi-Fi backup? The saved networks in it, including their passwords, cannot be restored afterwards.",
-                            "删除 Wi-Fi 备份？删除后，备份里的网络和密码都无法再恢复。"),
-                        L.T("NetWatchdog", "网络看门狗"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                    MessageBoxResult answer;
+                    BeginModal();
+                    try
+                    {
+                        answer = MessageBox.Show(
+                            L.T("Delete the Wi-Fi backup? The saved networks in it, including their passwords, cannot be restored afterwards.",
+                                "删除 Wi-Fi 备份？删除后，备份里的网络和密码都无法再恢复。"),
+                            L.T("NetWatchdog", "网络看门狗"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                    }
+                    finally { EndModal(); }
                     if (answer == MessageBoxResult.Yes) { SendRequest("delete-wifi-backup"); Refresh(); }
                     break;
                 }
@@ -1396,9 +1721,23 @@ namespace NetWatchdogUI
                     try { Process.Start("notepad.exe", "\"" + path + "\""); } catch (Exception ex) { Program.LogError(ex); }
                     break;
                 }
-                case "lang:auto": ChangeSetting("language", "auto"); break;
-                case "lang:zh": ChangeSetting("language", "zh"); break;
-                case "lang:en": ChangeSetting("language", "en"); break;
+                case "menu:lang": OpenMenu(fe, "LangPopup"); break;
+                case "menu:theme": OpenMenu(fe, "ThemePopup"); break;
+                case "lang:auto":
+                case "lang:zh":
+                case "lang:zh-TW":
+                case "lang:en":
+                case "lang:ja":
+                case "lang:ko":
+                    CloseMenus();
+                    // The watchdog stores the setting and writes its log in that language; the panel follows it
+                    ChangeSetting("language", tag.Substring(5));
+                    break;
+                case "theme:system":
+                case "theme:light":
+                case "theme:dark":
+                    SetThemeMode(tag.Substring(6));
+                    break;
                 case "addtarget": AddTarget(); break;
                 case "removetarget": RemoveTarget(fe.DataContext as TargetVM); break;
                 case "reset":
@@ -1527,9 +1866,15 @@ namespace NetWatchdogUI
                 case "restorewifi":
                     RestoreWifi();
                     break;
+                case "stopai":
+                    SendRequest("stop-ai");
+                    break;
+                case "aioff":
+                    ToggleAi(false);
+                    break;
                 case "page":
                     HideFlyout();
-                    try { Process.Start(update.Page); } catch (Exception ex) { Program.LogError(ex); }
+                    try { Process.Start(Updater.IsReleasePage(update.Page) ? update.Page : Updater.ReleasesPage); } catch (Exception ex) { Program.LogError(ex); }
                     break;
             }
         }
@@ -1586,11 +1931,15 @@ namespace NetWatchdogUI
             vm.UpdateStatusText = checking ? L.T("Checking for updates…", "正在检查更新…") : lastCheckText;
             vm.AutoUpdate = Updater.Enabled;
             vm.Raise("AutoUpdate");
+            vm.ThemeMode = Theme.Mode;
             vm.RepoText = "github.com/" + AppInfo.Repo;
+            UpdateAi();
 
             var baseSettings = st != null && !stale ? st.Settings : null;
             if (baseSettings == null)
             {
+                // A language choice that could not be sent must not stay selected
+                vm.LangSetting = vm.LangSetting;
                 cur = null;
                 vm.TargetsList.Clear();
                 vm.FailTargetsText = vm.TimeoutText = vm.IntervalText = vm.FailThresholdText = vm.RecoverText = vm.WifiRetryText = "—";
@@ -1634,10 +1983,9 @@ namespace NetWatchdogUI
             vm.RecoverText = Rounds(cur.Recover);
             vm.WifiRetryText = L.F("{0} min", "{0} 分钟", cur.WifiRetry);
             vm.WifiHunt = cur.WifiHunt;
-            vm.LangAuto = cur.Language == "auto";
-            vm.LangZh = cur.Language == "zh";
-            vm.LangEn = cur.Language == "en";
-            foreach (var name in new[] { "WifiHunt", "LangAuto", "LangZh", "LangEn" }) vm.Raise(name);
+            vm.LangSetting = cur.Language;
+            vm.Raise("WifiHunt");
+            FollowLanguage(cur.Language);
 
             UpdateRepairs();
 
@@ -1711,15 +2059,16 @@ namespace NetWatchdogUI
             }
             else vm.WifiBackupVisibility = Visibility.Collapsed;
             if (cur == null) { vm.RepairsList.Clear(); vm.RebootMaxText = "—"; return; }
-            if (vm.RepairsList.Count != cur.Repairs.Count || vm.RepairsList.Where((x, i) => x.Id != cur.Repairs[i].Id).Any())
+            var shown = cur.Repairs.Where(r => r.Id != "ai").ToList();
+            if (vm.RepairsList.Count != shown.Count || vm.RepairsList.Where((x, i) => x.Id != shown[i].Id).Any())
             {
                 vm.RepairsList.Clear();
-                foreach (var r in cur.Repairs) vm.RepairsList.Add(new RepairVM { Id = r.Id });
+                foreach (var r in shown) vm.RepairsList.Add(new RepairVM { Id = r.Id });
             }
             bool pendingList = pendingSettings.ContainsKey("repairActions");
-            for (int i = 0; i < cur.Repairs.Count; i++)
+            for (int i = 0; i < shown.Count; i++)
             {
-                var r = cur.Repairs[i];
+                var r = shown[i];
                 var x = vm.RepairsList[i];
                 string[] t;
                 if (!RepairText.TryGetValue(r.Id, out t)) t = new[] { r.Id, r.Id, "", "" };
@@ -1768,30 +2117,457 @@ namespace NetWatchdogUI
         {
             if (row == null) return;
             // Turning a system-changing repair on needs an administrator once; turning it off never does
-            if (on && Array.IndexOf(Program.AdminRepairs, row.Id) >= 0 && cur != null && !cur.AdminAllowed.Contains(row.Id))
-                RunElevated(Assembly.GetExecutingAssembly().Location, "--allow-repair " + row.Id, true);
-            ChangeRepair(row.Id, r => r.Enabled = on);
+            string id = row.Id;
+            if (on && Array.IndexOf(Program.AdminRepairs, id) >= 0 && cur != null && !cur.AdminAllowed.Contains(id))
+            {
+                RunElevatedAsync(Assembly.GetExecutingAssembly().Location, "--allow-repair " + id, code =>
+                {
+                    if (code != 0)
+                        SetError(L.T("The repair stays off", "修复没有开启"), L.T("Turning it on needs administrator approval.", "开启需要管理员确认。"));
+                    else ChangeRepair(id, r => r.Enabled = true);
+                    Refresh();
+                });
+                return;
+            }
+            ChangeRepair(id, r => r.Enabled = on);
         }
 
         void StepRepair(RepairVM row, int dir)
         {
-            if (row == null || cur == null) return;
-            var r = cur.Repairs.FirstOrDefault(x => x.Id == row.Id);
+            if (row != null) StepRepairId(row.Id, dir);
+        }
+
+        void StepRepairId(string id, int dir)
+        {
+            if (cur == null) return;
+            var r = cur.Repairs.FirstOrDefault(x => x.Id == id);
             if (r == null) return;
             int next = AfterStep(r.After, dir);
-            if (next != r.After) ChangeRepair(row.Id, x => x.After = next);
+            if (next != r.After) ChangeRepair(id, x => x.After = next);
         }
 
         void StepCooldown(RepairVM row, bool online, int dir)
         {
-            if (row == null || cur == null) return;
-            var r = cur.Repairs.FirstOrDefault(x => x.Id == row.Id);
+            if (row != null) StepCooldownId(row.Id, online, dir);
+        }
+
+        void StepCooldownId(string id, bool online, int dir)
+        {
+            if (cur == null) return;
+            var r = cur.Repairs.FirstOrDefault(x => x.Id == id);
             if (r == null) return;
             int now = online ? r.CdOnline : r.CdOffline;
             int next = CdStep(now, dir);
             if (next == now) return;
-            if (online) ChangeRepair(row.Id, x => x.CdOnline = next);
-            else ChangeRepair(row.Id, x => x.CdOffline = next);
+            if (online) ChangeRepair(id, x => x.CdOnline = next);
+            else ChangeRepair(id, x => x.CdOffline = next);
+        }
+
+        // ------------------------------------------------ AI tab
+
+        void UpdateAi()
+        {
+            var ai = st != null && !stale ? st.Ai : null;
+            SyncAiReminder(ai);
+            if (ai == null)
+            {
+                vm.AiNodeText = vm.AiPiText = L.T("Shown while the watchdog is running", "看门狗运行时才能检测");
+                vm.AiNodeBrush = vm.AiPiBrush = theme["SubText"];
+                vm.AiNodeActionVisibility = vm.AiPiActionVisibility = Visibility.Collapsed;
+                vm.AiModeText = vm.AiNodeText;
+                vm.AiAfterText = vm.AiMaxText = vm.AiCdOfflineText = vm.AiCdOnlineText = "—";
+                vm.AiSavedText = "";
+                vm.AiOn = false;
+                vm.Raise("AiOn");
+                vm.AiStopVisibility = Visibility.Collapsed;
+                return;
+            }
+
+            var node = AiSetup.ParseVersion(ai.Node);
+            bool nodeOk = node != null && node >= AiSetup.MinNode;
+            vm.AiNodeText = node == null
+                ? L.T("Not installed in Program Files; Pi needs version 22.19 or later", "Program Files 下没有安装，Pi 需要 22.19 或更高版本")
+                : nodeOk ? L.F("Version {0}", "版本 {0}", ai.Node)
+                : L.F("Version {0} is too old; Pi needs 22.19 or later", "版本 {0} 太旧，Pi 需要 22.19 或更高版本", ai.Node);
+            vm.AiNodeBrush = nodeOk ? theme["SubText"] : theme["Bad"];
+            vm.AiNodeAction = node == null ? L.T("Install", "安装") : L.T("Update", "升级");
+            vm.AiNodeActionVisibility = nodeOk ? Visibility.Collapsed : Visibility.Visible;
+            vm.AiPiText = ai.PiVersion == null
+                ? L.T("Not installed; required", "没有安装，必需")
+                : L.F("Version {0}", "版本 {0}", ai.PiVersion);
+            vm.AiPiBrush = ai.PiVersion == null ? theme["Bad"] : theme["SubText"];
+            vm.AiPiAction = ai.PiVersion == null ? L.T("Install", "一键安装") : L.T("Update", "升级");
+            vm.AiPiActionVisibility = Visibility.Visible;
+            vm.Raise("AiMirror");
+
+            if (!aiFormLoaded)
+            {
+                aiFormLoaded = true;
+                vm.AiUrl = ai.BaseUrl ?? AiSetup.Presets["ollama"];
+                vm.AiModel = ai.Model ?? "";
+                vm.AiSvc = AiSetup.DetectPreset(vm.AiUrl);
+                vm.AiPrompt = ai.Prompt;
+            }
+            string typed = (vm.AiPrompt ?? "").Replace("\r\n", "\n").Trim();
+            if (typed.Length > AiSetup.MaxPrompt)
+            {
+                vm.AiPromptText = L.F("{0} / {1} characters, too long", "{0} / {1} 字，超出上限", typed.Length, AiSetup.MaxPrompt);
+                vm.AiPromptBrush = theme["Bad"];
+            }
+            else if (typed != (ai.Prompt ?? "").Replace("\r\n", "\n").Trim())
+            {
+                vm.AiPromptText = L.F("{0} / {1} characters · not saved", "{0} / {1} 字 · 尚未保存", typed.Length, AiSetup.MaxPrompt);
+                vm.AiPromptBrush = theme["Warn"];
+            }
+            else
+            {
+                vm.AiPromptText = typed.Length == 0 ? L.T("No custom prompt", "未设置自定义提示词")
+                                                    : L.F("{0} / {1} characters · saved", "{0} / {1} 字 · 已保存", typed.Length, AiSetup.MaxPrompt);
+                vm.AiPromptBrush = theme["SubText"];
+            }
+            string hint = aiHint;
+            bool bad = aiHintBad;
+            if (hint == null && AiSetup.ValidUrl(vm.AiUrl) && !AiSetup.IsLocal(vm.AiUrl))
+            {
+                hint = L.T("This address is outside this computer and the local network, so it cannot be reached during an outage.",
+                           "这个地址不在本机或局域网内，断网时无法访问。");
+                bad = true;
+            }
+            vm.AiServiceHint = hint;
+            vm.AiServiceHintBrush = bad ? theme["Bad"] : theme["SubText"];
+            vm.AiServiceHintVisibility = hint == null ? Visibility.Collapsed : Visibility.Visible;
+            vm.AiSavedText = ai.Model != null
+                ? L.F("Saved: {0} · {1}", "已保存：{0} · {1}", ai.Model, ai.BaseUrl)
+                  + (ai.HasKey ? L.T(" · API key saved; leave the key box empty to keep it", " · 已保存 API Key，留空则保持不变") : "")
+                : L.T("No service saved yet. Saving asks for administrator approval.", "还没有保存服务。保存时需要管理员确认。");
+
+            var r = cur == null ? null : cur.Repairs.FirstOrDefault(x => x.Id == "ai");
+            bool enabled = r != null && r.Enabled;
+            vm.AiOn = enabled;
+            vm.Raise("AiOn");
+            vm.AiToggleOpacity = pendingSettings.ContainsKey("repairActions") ? 0.5 : 1;
+            if (ai.Running && ai.StartedAt.HasValue)
+                vm.AiModeText = L.F("Repairing for {0} min", "正在修复，已运行 {0} 分钟", (int)(DateTime.Now - ai.StartedAt.Value).TotalMinutes);
+            else if (ai.On) vm.AiModeText = L.T("On. Automatic switching is paused.", "已开启，自动切换已暂停。");
+            else if (enabled) vm.AiModeText = L.T("Waiting for administrator approval", "等待管理员确认");
+            else if (ai.Problem != null) vm.AiModeText = L.F("Off. Not ready: {0}", "已关闭。尚未就绪：{0}", ai.Problem);
+            else vm.AiModeText = L.T("Off. Turning it on asks you to type a confirmation and approve as administrator.", "已关闭。开启时需要手动输入确认短语，并通过管理员确认。");
+            if (r != null)
+            {
+                vm.AiAfterText = AfterText(r.After);
+                vm.AiCdOfflineText = CdText(r.CdOffline);
+                vm.AiCdOnlineText = CdText(r.CdOnline);
+            }
+            vm.AiMaxText = cur == null ? "—" : L.F("{0} min", "{0} 分钟", cur.AiMaxMinutes);
+            vm.AiStopVisibility = ai.Running ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // The one-second note at sign-in comes from a Run value that exists while AI repair mode is on
+        void SyncAiReminder(AiInfo ai)
+        {
+            if (opt.Snapshot != null || ai == null || aiReminderSynced == ai.On) return;
+            aiReminderSynced = ai.On;
+            try
+            {
+                using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
+                {
+                    if (ai.On) k.SetValue(AiReminderValue, "\"" + Assembly.GetExecutingAssembly().Location + "\" --ai-reminder");
+                    else k.DeleteValue(AiReminderValue, false);
+                }
+            }
+            catch (Exception ex) { Program.LogError(ex); }
+        }
+
+        static string ProgramFilesDir { get { return Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles); } }
+
+        void InstallNode()
+        {
+            // winget asks for administrator approval itself; the console stays open to show the result
+            try
+            {
+                Process.Start(new ProcessStartInfo("cmd.exe",
+                    "/s /c \"title Node.js & winget install --id OpenJS.NodeJS.LTS -e --scope machine & echo. & pause\"") { UseShellExecute = true });
+            }
+            catch (Exception ex) { SetError(L.T("Cannot start winget", "无法启动 winget"), ex.Message); Refresh(); }
+        }
+
+        void InstallPi()
+        {
+            var ai = st != null && !stale ? st.Ai : null;
+            var node = ai == null ? null : AiSetup.ParseVersion(ai.Node);
+            if (node == null || node < AiSetup.MinNode)
+            {
+                SetError(L.T("Install Node.js first", "请先安装 Node.js"),
+                         L.T("Pi needs Node.js 22.19 or later, installed in Program Files.", "Pi 需要装在 Program Files 下的 Node.js 22.19 或更高版本。"));
+                Refresh();
+                return;
+            }
+            // The same npm command as cc-switch, with the prefix inside the install folder, which only
+            // administrators can write; the console window shows npm's output
+            string npm = Path.Combine(ProgramFilesDir, "nodejs", "npm.cmd");
+            string prefix = ai.PiDir ?? Path.Combine(ExeDir, "pi");
+            string cmd = "\"" + npm + "\" install -g --prefix \"" + prefix + "\" " + AiSetup.PiPackage + "@latest --no-fund --no-audit";
+            if (vm.AiMirror) cmd += " --registry=https://registry.npmmirror.com";
+            string cli = Path.Combine(prefix, @"node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js");
+            Process p = null;
+            BeginModal();
+            try
+            {
+                p = Process.Start(new ProcessStartInfo("cmd.exe", "/s /c \"title Pi & echo " + cmd + " & " + cmd + " & echo. & pause\"")
+                    { Verb = "runas", UseShellExecute = true });
+            }
+            catch (Win32Exception ex)
+            {
+                Program.LogError(ex);
+                SetError(L.T("Pi was not installed", "没有安装 Pi"), L.T("Installing needs administrator approval.", "安装需要管理员确认。"));
+            }
+            finally { EndModal(); }
+            if (p != null)
+            {
+                SetNotice(L.T("Installing Pi…", "正在安装 Pi…"),
+                          L.T("Follow the progress in the console window and press a key there when it is done.", "进度显示在控制台窗口里，完成后在窗口里按任意键关闭。"), false);
+                // Once the console closes, report whether Pi is really there
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try { p.WaitForExit(); } catch { }
+                    flyout.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        // The flyout usually closed while the console had the focus, so the tray balloon tells the result too
+                        if (File.Exists(cli))
+                        {
+                            SetNotice(L.T("Pi is installed", "Pi 已安装"), prefix, false);
+                            Notify(L.T("Pi is installed", "Pi 已安装"), prefix);
+                        }
+                        else
+                        {
+                            Program.LogError(new FileNotFoundException("Pi install finished without " + cli));
+                            string detail = L.T("npm did not finish the installation; its output in the console window shows why.", "npm 没有完成安装，原因见控制台窗口里的输出。");
+                            SetError(L.T("Pi was not installed", "Pi 没有装上"), detail);
+                            Notify(L.T("Pi was not installed", "Pi 没有装上"), detail);
+                        }
+                        SendRequest("probe");
+                        Refresh();
+                    }));
+                });
+            }
+            Refresh();
+        }
+
+        PasswordBox AiKeyBox { get { return (PasswordBox)flyout.FindName("AiKeyBox"); } }
+
+        void TestAi()
+        {
+            if (aiTesting) return;
+            string url = (vm.AiUrl ?? "").Trim().TrimEnd('/');
+            string key = AiKeyBox.Password.Trim();
+            if (!AiSetup.ValidUrl(url))
+            {
+                aiHint = L.T("Enter an address that starts with http:// or https://", "请输入以 http:// 或 https:// 开头的地址");
+                aiHintBad = true;
+                Refresh();
+                return;
+            }
+            aiTesting = true;
+            aiHint = L.T("Testing…", "正在测试…");
+            aiHintBad = false;
+            Refresh();
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                List<string> ids = null;
+                string err = null;
+                try { ids = AiSetup.ListModels(url, key); }
+                catch (Exception ex) { err = ex.Message; }
+                flyout.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    aiTesting = false;
+                    vm.AiModelsList.Clear();
+                    if (err != null)
+                    {
+                        aiHint = L.F("Cannot reach the service: {0}", "无法连接服务：{0}", err);
+                        aiHintBad = true;
+                    }
+                    else
+                    {
+                        foreach (var id in ids) vm.AiModelsList.Add(id);
+                        aiHintBad = ids.Count == 0;
+                        aiHint = ids.Count == 0
+                            ? L.T("The service answered but lists no models. Load or download a model in the service first (for Ollama: ollama pull <model>).",
+                                  "服务有响应，但没有列出任何模型。请先在服务里加载或下载模型（Ollama 用 ollama pull <模型名>）。")
+                            : L.F("Connected. {0} model(s); click one to use it.", "连接成功，共 {0} 个模型，点击即可选用。", ids.Count);
+                        if (ids.Count == 1 && string.IsNullOrWhiteSpace(vm.AiModel)) vm.AiModel = ids[0];
+                    }
+                    Refresh();
+                    if (flyout.IsVisible) { flyout.UpdateLayout(); Fit(); }
+                }));
+            });
+        }
+
+        void SaveAi()
+        {
+            string url = (vm.AiUrl ?? "").Trim().TrimEnd('/');
+            string model = (vm.AiModel ?? "").Trim();
+            if (!AiSetup.ValidUrl(url) || !AiSetup.ValidModel(model))
+            {
+                aiHint = L.T("Enter the API address (without user name, query or #) and a model before saving.", "请先填写接口地址（不含用户名、查询参数和 #）和模型，再保存。");
+                aiHintBad = true;
+                Refresh();
+                return;
+            }
+            string key = AiKeyBox.Password.Trim();
+            var ai = st != null && !stale ? st.Ai : null;
+            var payload = new Dictionary<string, object> { { "baseUrl", url }, { "model", model }, { "apiKey", key } };
+            if (key.Length == 0 && ai != null && ai.HasKey) payload["keepKey"] = true;
+            SaveAiConfig(payload, () =>
+            {
+                aiHint = null;
+                SetNotice(L.T("AI service saved", "AI 服务已保存"), model + " · " + url, false);
+            });
+        }
+
+        void SaveAiPrompt()
+        {
+            string prompt = (vm.AiPrompt ?? "").Replace("\r\n", "\n").Trim();
+            if (prompt.Length > AiSetup.MaxPrompt) { SetError(L.T("The prompt is too long", "提示词太长"), L.F("At most {0} characters.", "最多 {0} 字。", AiSetup.MaxPrompt)); Refresh(); return; }
+            SaveAiConfig(new Dictionary<string, object> { { "prompt", prompt } }, () =>
+                SetNotice(prompt.Length == 0 ? L.T("Custom prompt removed", "已清除自定义提示词") : L.T("Custom prompt saved", "自定义提示词已保存"),
+                          L.T("It applies from the next AI run.", "从下一次 AI 修复开始生效。"), false));
+        }
+
+        // Hands the values to the elevated helper through a temp file together with the file's SHA-256, so the
+        // helper rejects a file another program replaced while the UAC prompt was open
+        void SaveAiConfig(Dictionary<string, object> payload, Action saved)
+        {
+            string tmp = Path.Combine(Path.GetTempPath(), TempPrefix + Guid.NewGuid().ToString("N") + ".json");
+            byte[] bytes = new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(payload));
+            try { File.WriteAllBytes(tmp, bytes); }
+            catch (Exception ex) { SetError(L.T("Not saved", "没有保存"), ex.Message); Refresh(); return; }
+            RunElevatedAsync(Assembly.GetExecutingAssembly().Location, "--save-ai \"" + tmp + "\" " + AiSetup.HashOf(bytes), code =>
+            {
+                try { File.Delete(tmp); } catch { }
+                if (code == 0) { saved(); SendRequest("probe"); }
+                else if (code < 0) SetError(L.T("Not saved", "没有保存"), L.T("Saving needs administrator approval.", "保存需要管理员确认。"));
+                else if (code == 3) SetError(L.T("Not saved", "没有保存"), L.T("The values were changed by another program while waiting for approval.", "等待确认期间，要保存的内容被其他程序改动过。"));
+                else if (code == 4) SetError(L.T("Not saved", "没有保存"), L.T("The permissions of the AI settings folder could not be restricted to administrators.", "无法把 AI 配置目录的权限限制为仅管理员可访问。"));
+                else SetError(L.T("Not saved", "没有保存"), L.F("The helper exited with code {0}.", "保存程序的退出码为 {0}。", code));
+                Refresh();
+            });
+        }
+
+        const string TempPrefix = "NetWatchdog-ai-";
+
+        // A save interrupted by ending the panel can leave a temp file with an API key behind
+        static void RemoveStaleTempFiles()
+        {
+            try
+            {
+                foreach (var f in Directory.GetFiles(Path.GetTempPath(), TempPrefix + "*.json"))
+                    if ((DateTime.Now - File.GetLastWriteTime(f)).TotalMinutes > 10) File.Delete(f);
+            }
+            catch { }
+        }
+
+        void ToggleAi(bool on)
+        {
+            var ai = st != null && !stale ? st.Ai : null;
+            if (cur == null || ai == null) { SendRequest("probe"); Refresh(); return; }
+            if (!on) { ChangeRepair("ai", r => r.Enabled = false); return; }
+            if (ai.Problem != null)
+            {
+                SetError(L.T("AI repair mode cannot be turned on", "无法开启 AI 修复模式"), ai.Problem);
+                Refresh();
+                return;
+            }
+            if (!ConfirmAi()) { Refresh(); return; }
+            RunElevatedAsync(Assembly.GetExecutingAssembly().Location, "--allow-repair ai", code =>
+            {
+                if (code != 0)
+                {
+                    SetError(L.T("AI repair mode stays off", "AI 修复模式没有开启"),
+                             L.T("Turning it on needs administrator approval.", "开启需要管理员确认。"));
+                    Refresh();
+                    return;
+                }
+                ChangeRepair("ai", r => r.Enabled = true);
+            });
+        }
+
+        // The phrase has to be typed: pasting, dropping and the context menu are blocked
+        bool ConfirmAi()
+        {
+            var w = BuildAiConfirm();
+            BeginModal();
+            try { return w.ShowDialog() == true; }
+            finally { EndModal(); }
+        }
+
+        Window BuildAiConfirm()
+        {
+            var w = (Window)Xaml.Load("NetWatchdogUI.AiConfirm.xaml");
+            L.Apply(w);
+            theme.Apply(w.Resources);
+            // The phrase to type is the one of the language in use
+            string phrase = L.RiskPhrase;
+            ((TextBlock)w.FindName("PhrasePrompt")).Text = L.F("Type “{0}” to continue:", "请输入“{0}”以继续：", phrase);
+            var box = (TextBox)w.FindName("Phrase");
+            var ok = (Button)w.FindName("Confirm");
+            DataObject.AddPastingHandler(box, (s, e) => e.CancelCommand());
+            CommandManager.AddPreviewExecutedHandler(box, (s, e) => { if (e.Command == ApplicationCommands.Paste) e.Handled = true; });
+            box.AllowDrop = false;
+            box.PreviewDragOver += (s, e) => { e.Effects = DragDropEffects.None; e.Handled = true; };
+            box.PreviewDrop += (s, e) => e.Handled = true;
+            box.ContextMenu = new ContextMenu { Visibility = Visibility.Collapsed };
+            box.TextChanged += (s, e) => ok.IsEnabled = box.Text.Trim() == phrase;
+            ok.Click += (s, e) => w.DialogResult = true;
+            w.SourceInitialized += (s, e) =>
+            {
+                int dark = theme.Dark ? 1 : 0;
+                Native.DwmSetWindowAttribute(new WindowInteropHelper(w).Handle, 20, ref dark, 4);
+            };
+            w.Loaded += (s, e) => box.Focus();
+            return w;
+        }
+
+        void OpenAiLog()
+        {
+            var ai = st != null && !stale ? st.Ai : null;
+            string path = ai == null ? null : ai.Log;
+            if ((path == null || !File.Exists(path)) && ai != null && ai.LogDir != null && Directory.Exists(ai.LogDir))
+                path = Directory.GetFiles(ai.LogDir, "*.log").OrderByDescending(f => f).FirstOrDefault();
+            if (path == null || !File.Exists(path)) { SetNotice(L.T("The AI has not run yet", "AI 还没有运行过"), ai == null ? "" : ai.LogDir, false); Refresh(); return; }
+            try { Process.Start("notepad.exe", "\"" + path + "\""); } catch (Exception ex) { Program.LogError(ex); }
+        }
+
+        // While a dialog or a UAC prompt is open the flyout stays visible and the language is not switched;
+        // calls nest
+        int modalDepth;
+        void BeginModal() { modalDepth++; modal = true; }
+        void EndModal()
+        {
+            if (modalDepth > 0) modalDepth--;
+            modal = modalDepth > 0;
+            if (!modal && reloadAfterModal)
+            {
+                reloadAfterModal = false;
+                flyout.Dispatcher.BeginInvoke(new Action(ReloadLanguage), DispatcherPriority.Background);
+            }
+        }
+
+        // Starts an elevated helper and calls done on the UI thread with its exit code, or -1 when the UAC prompt
+        // was cancelled. The UI keeps running while the prompt and the helper are open.
+        void RunElevatedAsync(string file, string args, Action<int> done)
+        {
+            Process p;
+            BeginModal();
+            try { p = Process.Start(new ProcessStartInfo(file, args) { Verb = "runas", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden }); }
+            catch (Win32Exception) { p = null; }
+            if (p == null) { EndModal(); done(-1); return; }
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                int code = -1;
+                try { p.WaitForExit(); code = p.ExitCode; } catch { }
+                finally { p.Dispose(); }
+                flyout.Dispatcher.BeginInvoke(new Action(() => { EndModal(); done(code); }));
+            });
         }
 
         // Importing the backup is done by the watchdog, which runs as SYSTEM and can read the protected folder
@@ -1924,7 +2700,7 @@ namespace NetWatchdogUI
                     else
                     {
                         // The installer asks for administrator approval itself, then upgrades in place
-                        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); HideFlyout(); }
+                        try { Updater.Launch(path, r.Sha256); HideFlyout(); }
                         catch (Exception ex) { SetError(L.T("Cannot start the installer", "无法启动安装程序"), ex.Message); }
                     }
                     Refresh();
@@ -1976,7 +2752,10 @@ namespace NetWatchdogUI
             using (var dc = visual.RenderOpen())
             {
                 dc.DrawRectangle(theme["Bg"], null, new Rect(0, 0, w, h));
-                dc.DrawRectangle(new VisualBrush(content), null, new Rect(0, 0, w, h));
+                // The brush's origin is the parent's, so the element's offset (its margin) is skipped; the default
+                // viewbox would be the bounds of all descendants, which include the collapsed tabs
+                var offset = VisualTreeHelper.GetOffset(content);
+                dc.DrawRectangle(new VisualBrush(content) { Viewbox = new Rect(offset.X, offset.Y, w, h), ViewboxUnits = BrushMappingMode.Absolute }, null, new Rect(0, 0, w, h));
             }
             var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap((int)(w * 1.5), (int)(h * 1.5), 144, 144, PixelFormats.Pbgra32);
             bmp.Render(visual);
@@ -1991,22 +2770,51 @@ namespace NetWatchdogUI
         void StartSnapshot()
         {
             var wa = WF.Screen.PrimaryScreen.WorkingArea;
+            // --page aiconfirm: the confirmation shown before AI repair mode is turned on
+            if (opt.Page == "aiconfirm")
+            {
+                var w = BuildAiConfirm();
+                w.Show();
+                var td = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
+                td.Tick += (s, e) =>
+                {
+                    td.Stop();
+                    try
+                    {
+                        Native.SaveWindow(new WindowInteropHelper(w).Handle, opt.Snapshot);
+                    }
+                    catch (Exception ex) { Program.LogError(ex); }
+                    Application.Current.Shutdown();
+                };
+                td.Start();
+                return;
+            }
             ShowFlyout(new System.Drawing.Point(wa.Right - 20, wa.Bottom - 20));
             OpenRequestedPage();
             flyout.Topmost = true;
+            // --page menu:lang | menu:theme: the open menu is also rendered to <name>-menu.png
+            string menuName = opt.Page == "menu:lang" ? "LangPopup" : opt.Page == "menu:theme" ? "ThemePopup" : null;
+            if (menuName != null)
+            {
+                var pop = (Popup)flyout.FindName(menuName);
+                pop.PlacementTarget = body;
+                pop.HorizontalOffset = 130;
+                pop.VerticalOffset = 60;
+                pop.IsOpen = true;
+            }
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
             t.Tick += (s, e) =>
             {
                 t.Stop();
                 try
                 {
-                    Native.RECT r;
-                    Native.GetWindowRect(new WindowInteropHelper(flyout).Handle, out r);
-                    var rect = new SD.Rectangle(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
-                    using (var bmp = new SD.Bitmap(rect.Width, rect.Height))
+                    Native.SaveWindow(new WindowInteropHelper(flyout).Handle, opt.Snapshot);
+                    if (menuName != null)
                     {
-                        using (var g = SD.Graphics.FromImage(bmp)) g.CopyFromScreen(rect.Location, SD.Point.Empty, rect.Size);
-                        bmp.Save(opt.Snapshot, SD.Imaging.ImageFormat.Png);
+                        var content = (FrameworkElement)((Popup)flyout.FindName(menuName)).Child;
+                        content.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                        content.Arrange(new Rect(content.DesiredSize));
+                        RenderFull(content, Path.ChangeExtension(opt.Snapshot, null) + "-menu.png");
                     }
                     if (onSettings)
                         RenderFull((FrameworkElement)((ScrollViewer)flyout.FindName("SettingsScroll")).Content,

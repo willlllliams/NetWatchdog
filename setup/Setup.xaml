@@ -40,7 +40,7 @@
                 </Grid.ColumnDefinitions>
                 <Image x:Name="AppIcon" Width="56" Height="56"/>
                 <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Heading}" FontSize="22" FontWeight="SemiBold"
+                    <TextBlock x:Name="HeadingText" Text="{Binding Heading}" FontSize="22" FontWeight="SemiBold"
                                FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"/>
                     <TextBlock Text="{Binding Subheading}" Foreground="{DynamicResource SubText}" Margin="0,4,0,0"/>
                 </StackPanel>

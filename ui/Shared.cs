@@ -6,12 +6,14 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Xaml;
@@ -27,21 +29,127 @@ namespace NetWatchdogUI
 {
     // ---------------------------------------------------------------- Language
 
-    // English or Simplified Chinese. Follows the Windows display language unless --lang en|zh is given.
-    // Strings are written as pairs at the call site: L.T("English", "中文").
+    // UI language of the tray panel and the installer.
+    //
+    // Strings are written once at the call site as an English/Chinese pair, L.T("English", "中文"). Simplified
+    // Chinese ("zh") and English ("en") use the pair directly. Every other language looks the English text up
+    // in its translation table, the embedded resource i18n/<code>.json (a JSON object: English source text ->
+    // translation) and falls back to the English text when the table has no entry.
+    //
+    // To add a language: create ui/i18n/<code>.json, add its code, native name, font and culture to
+    // L.Languages below, and add a table for the code to $Messages in NetWatchdog.ps1. build.ps1 embeds every
+    // ui/i18n/*.json by itself; tools/Check-I18n.ps1 lists the strings a table still lacks.
     public static class L
     {
-        public static bool Zh = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh";
-
-        public static void Init(string forced)
+        public class Info
         {
-            if (forced == "zh") Zh = true;
-            else if (forced == "en") Zh = false;
+            public string Code, Name, Culture, Font;
+            public Info(string code, string name, string culture, string font) { Code = code; Name = name; Culture = culture; Font = font; }
         }
 
-        public static string T(string en, string zh) { return Zh ? zh : en; }
+        const string BaseFont = "Segoe UI Variable Text, Segoe UI, ";
+
+        // Codes as stored in the watchdog's "language" setting (besides "auto"), each language in its own name
+        public static readonly Info[] Languages =
+        {
+            new Info("zh", "简体中文", "zh-CN", BaseFont + "Microsoft YaHei UI, Microsoft JhengHei UI, Yu Gothic UI, Malgun Gothic"),
+            new Info("zh-TW", "繁體中文", "zh-TW", BaseFont + "Microsoft JhengHei UI, Microsoft YaHei UI, Yu Gothic UI, Malgun Gothic"),
+            new Info("en", "English", "en-US", BaseFont + "Microsoft YaHei UI, Yu Gothic UI, Malgun Gothic"),
+            new Info("ja", "日本語", "ja-JP", BaseFont + "Yu Gothic UI, Meiryo UI, Microsoft YaHei UI, Malgun Gothic"),
+            new Info("ko", "한국어", "ko-KR", BaseFont + "Malgun Gothic, Yu Gothic UI, Microsoft YaHei UI"),
+        };
+
+        // Code of the language in use
+        public static string Lang = "en";
+        static Dictionary<string, string> table;
+
+        static L() { Init("auto"); }
+
+        // Simplified Chinese: the pair's Chinese text is used as written
+        public static bool Zh { get { return Lang == "zh"; } }
+
+        public static Info Current { get { return Languages.First(l => l.Code == Lang); } }
+
+        // Maps a setting or culture name (auto, zh, zh-CN, zh-Hant, zh-TW, ja, ja-JP, ko, en-GB ...) to one of the
+        // codes above; "auto" and empty mean the Windows display language. Returns null for an unknown language.
+        public static string Normalize(string setting)
+        {
+            string s = (setting ?? "").Trim().ToLowerInvariant().Replace('_', '-');
+            bool auto = s.Length == 0 || s == "auto";
+            if (auto) s = CultureInfo.CurrentUICulture.Name.ToLowerInvariant();
+            if (s.StartsWith("zh"))
+            {
+                bool traditional = s.Contains("hant") || s.EndsWith("-tw") || s.EndsWith("-hk") || s.EndsWith("-mo") || s.EndsWith("-cht");
+                return traditional ? "zh-TW" : "zh";
+            }
+            if (s == "ja" || s.StartsWith("ja-")) return "ja";
+            if (s == "ko" || s.StartsWith("ko-")) return "ko";
+            if (s == "en" || s.StartsWith("en-")) return "en";
+            // A Windows display language without a translation shows English; an unknown setting is ignored
+            return auto ? "en" : null;
+        }
+
+        // Switches the language: "auto" follows Windows, an unknown code leaves the language as it is
+        public static void Init(string setting)
+        {
+            string code = Normalize(setting);
+            if (code == null) return;
+            Lang = code;
+            table = Load(code);
+        }
+
+        static Dictionary<string, string> Load(string code)
+        {
+            if (code == "zh" || code == "en") return null;
+            try
+            {
+                using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("NetWatchdogUI.i18n." + code + ".json"))
+                {
+                    if (s == null) return null;
+                    using (var r = new StreamReader(s, Encoding.UTF8))
+                    {
+                        var d = new System.Web.Script.Serialization.JavaScriptSerializer().DeserializeObject(r.ReadToEnd()) as Dictionary<string, object>;
+                        if (d == null) return null;
+                        var t = new Dictionary<string, string>(d.Count);
+                        foreach (var kv in d)
+                        {
+                            var v = kv.Value as string;
+                            if (!string.IsNullOrEmpty(v)) t[kv.Key] = code == "ko" ? KeepWords(v) : v;
+                        }
+                        return t;
+                    }
+                }
+            }
+            catch { return null; }
+        }
+
+        // WPF may break a line between any two Hangul syllables, in the middle of a word. A word joiner (U+2060,
+        // invisible) between syllables leaves the spaces as the only places where Korean text wraps.
+        static string KeepWords(string s)
+        {
+            return System.Text.RegularExpressions.Regex.Replace(s, "(?<=[\uAC00-\uD7A3])(?=[\uAC00-\uD7A3])", "\u2060");
+        }
+
+        public static string T(string en, string zh)
+        {
+            if (Lang == "zh") return zh;
+            if (table == null) return en;
+            string v;
+            return table.TryGetValue(en, out v) ? v : en;
+        }
 
         public static string F(string en, string zh, params object[] args) { return string.Format(T(en, zh), args); }
+
+        // The phrase typed to confirm turning on AI repair mode, in the language in use
+        public static string RiskPhrase { get { return L.T("I understand the risk", "我已了解风险").Replace("\u2060", ""); } }
+
+        // Applies the language's fonts and culture to a window; Han characters get the right regional glyphs
+        public static void Apply(FrameworkElement root)
+        {
+            var info = Current;
+            root.Language = XmlLanguage.GetLanguage(info.Culture);
+            root.SetValue(Control.FontFamilyProperty, new FontFamily(info.Font));
+        }
     }
 
     // XAML counterpart of L.T: Text="{local:Tr 'Exit', '退出'}"
@@ -59,17 +167,49 @@ namespace NetWatchdogUI
 
     // ---------------------------------------------------------------- Theme
 
-    // Follows the system (taskbar) light/dark mode and accent color; colors match Windows 11 Quick Settings
+    // Follows the system (taskbar) light/dark mode unless the user picked light or dark, and the system accent
+    // color; colors match Windows 11 Quick Settings
     class Theme
     {
         public bool Dark;
         public Color Accent;
         readonly Dictionary<string, SolidColorBrush> brushes = new Dictionary<string, SolidColorBrush>();
 
+        // The user's choice, kept per user in HKCU\Software\NetWatchdog (value "Theme"): system, light or dark.
+        // --dark and --light on the command line override it.
+        const string SettingsKey = AppPaths.UserKey;
+
+        public static string Mode
+        {
+            get
+            {
+                try
+                {
+                    using (var k = Registry.CurrentUser.OpenSubKey(SettingsKey))
+                    {
+                        string v = k == null ? null : k.GetValue("Theme") as string;
+                        if (v == "light" || v == "dark") return v;
+                    }
+                }
+                catch { }
+                return "system";
+            }
+            set
+            {
+                try
+                {
+                    using (var k = Registry.CurrentUser.CreateSubKey(SettingsKey))
+                        k.SetValue("Theme", value == "light" || value == "dark" ? value : "system", RegistryValueKind.String);
+                }
+                catch { }
+            }
+        }
+
         public static Theme Load(bool? force)
         {
             var t = new Theme();
-            t.Dark = force.HasValue ? force.Value : ReadDark();
+            string mode = Mode;
+            t.Dark = force.HasValue ? force.Value : mode == "dark" ? true : mode == "light" ? false : ReadDark();
             t.Accent = ReadAccent(t.Dark);
             t.Build();
             return t;
@@ -189,8 +329,12 @@ namespace NetWatchdogUI
     static class Xaml
     {
         // Shared styles go into application resources so StaticResource references resolve while windows load
+        static bool stylesLoaded;
+
         public static void LoadStyles(Application app)
         {
+            if (stylesLoaded) return;
+            stylesLoaded = true;
             app.Resources.MergedDictionaries.Add((ResourceDictionary)Load("NetWatchdogUI.Styles.xaml"));
         }
 
@@ -210,13 +354,46 @@ namespace NetWatchdogUI
 
     // ---------------------------------------------------------------- Win32
 
+    // Locations shared by the panel, its elevated helpers and the installer
+    static class AppPaths
+    {
+        public const string UserKey = @"Software\NetWatchdog";
+        public const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        public static string DataDir { get { return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "NetWatchdog"); } }
+
+        // Readers (the SYSTEM watchdog among them) never see a half-written file
+        public static void WriteAtomic(string path, string text)
+        {
+            string tmp = path + ".tmp";
+            System.IO.File.WriteAllText(tmp, text, new System.Text.UTF8Encoding(false));
+            if (System.IO.File.Exists(path)) System.IO.File.Replace(tmp, path, null);
+            else System.IO.File.Move(tmp, path);
+        }
+    }
+
     static class Native
     {
         [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
         [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr handle);
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
         [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
-        [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+
+        // Captures only the window itself, even when other windows cover it, so screenshots never show anything else
+        public static void SaveWindow(IntPtr hwnd, string path)
+        {
+            RECT r;
+            GetWindowRect(hwnd, out r);
+            using (var bmp = new System.Drawing.Bitmap(r.Right - r.Left, r.Bottom - r.Top))
+            {
+                using (var g = System.Drawing.Graphics.FromImage(bmp))
+                {
+                    IntPtr hdc = g.GetHdc();
+                    try { PrintWindow(hwnd, hdc, 2); } finally { g.ReleaseHdc(hdc); }
+                }
+                bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            }
+        }
         [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
         [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hwnd, int index, int value);
         [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
@@ -225,8 +402,6 @@ namespace NetWatchdogUI
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
         [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
 
-        public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
-        public const uint SWP_NOSIZE = 0x1, SWP_NOACTIVATE = 0x10;
 
         public static double ScaleAt(int x, int y)
         {

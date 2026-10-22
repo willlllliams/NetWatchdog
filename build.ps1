@@ -119,12 +119,15 @@ function Invoke-Csc([string]$Out, [string[]]$Resources, [string[]]$Sources) {
 
 $shared = Join-Path $ui 'Shared.cs'
 $styles = "$(Join-Path $ui 'Styles.xaml'),NetWatchdogUI.Styles.xaml"
+# Translation tables (ui\i18n\<code>.json: English text -> translation), embedded in both programs
+$i18n = @(Get-ChildItem -LiteralPath (Join-Path $ui 'i18n') -Filter '*.json' | Sort-Object Name |
+    ForEach-Object { "$($_.FullName),NetWatchdogUI.i18n.$($_.BaseName).json" })
 
 # Tray panel
 $panel = Join-Path $bin 'NetWatchdogUI.exe'
 Invoke-Csc $panel `
-    @($styles, "$(Join-Path $ui 'Flyout.xaml'),NetWatchdogUI.Flyout.xaml") `
-    @($shared, (Join-Path $ui 'NetWatchdogUI.cs'), (Join-Path $ui 'Updater.cs'), $versionFile)
+    (@($styles, "$(Join-Path $ui 'Flyout.xaml'),NetWatchdogUI.Flyout.xaml", "$(Join-Path $ui 'AiConfirm.xaml'),NetWatchdogUI.AiConfirm.xaml") + $i18n) `
+    @($shared, (Join-Path $ui 'NetWatchdogUI.cs'), (Join-Path $ui 'Ai.cs'), (Join-Path $ui 'Updater.cs'), $versionFile)
 
 # NetRepair: console port of NetAdapter Repair's repairs, called by the watchdog
 $netRepair = Join-Path $bin 'NetRepair.exe'
@@ -133,14 +136,19 @@ $netRepair = Join-Path $bin 'NetRepair.exe'
 if ($LASTEXITCODE -ne 0) { throw "Building $netRepair failed (csc exit code $LASTEXITCODE)" }
 Write-Host "Built $netRepair"
 
-# Setup package: embeds the watchdog script, NetRepair and the freshly built tray panel
-Get-ChildItem -LiteralPath $bin -Filter 'NetWatchdog-Setup-*.exe' | Remove-Item -Force
+# Translations: every string of the sources must be in every table
+& (Join-Path $root 'tools\Check-I18n.ps1') | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Translations are incomplete; run tools\Check-I18n.ps1 for the list' }
+
+# Setup package: embeds the watchdog script, NetRepair and the freshly built tray panel.
+# Packages of other versions are removed only after this one was built.
 $setupExe = Join-Path $bin "NetWatchdog-Setup-$version.exe"
 Invoke-Csc $setupExe `
-    @($styles,
+    (@($styles,
       "$(Join-Path $setup 'Setup.xaml'),NetWatchdogUI.Setup.xaml",
       "$icon,NetWatchdogUI.app.ico",
       "$panel,payload.NetWatchdogUI.exe",
       "$netRepair,payload.NetRepair.exe",
-      "$(Join-Path $root 'NetWatchdog.ps1'),payload.NetWatchdog.ps1") `
+      "$(Join-Path $root 'NetWatchdog.ps1'),payload.NetWatchdog.ps1") + $i18n) `
     @($shared, (Join-Path $setup 'Setup.cs'), $versionFile)
+Get-ChildItem -LiteralPath $bin -Filter 'NetWatchdog-Setup-*.exe' | Where-Object { $_.FullName -ne $setupExe } | Remove-Item -Force

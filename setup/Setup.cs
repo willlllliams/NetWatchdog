@@ -3,7 +3,7 @@
 //   NetWatchdogSetup.exe                 install; upgrade or reinstall when already installed
 //   NetWatchdogSetup.exe --repair        reinstall with the existing settings (the panel's Repair button)
 //   NetWatchdogSetup.exe --uninstall     uninstall (the Uninstall button in Settings > Apps)
-//   add --quiet to run without UI using default or existing settings; --lang en|zh picks the language
+//   add --quiet to run without UI using default or existing settings; --lang en|zh|zh-TW|ja|ko picks the language
 // Program files go to Program Files; config, log and state go to ProgramData\NetWatchdog.
 // The watchdog script and the tray panel are embedded in this exe as resources.
 
@@ -65,8 +65,8 @@ namespace NetWatchdogUI
                     string v = args[++i];
                     if (s == "--snapshot") a.Snapshot = v;
                     else if (s == "--page") a.Page = v.ToLowerInvariant();
-                    else if (s == "--dir") a.Dir = v;
-                    else L.Init(v.ToLowerInvariant());
+                    else if (s == "--dir") a.Dir = Path.Combine(v, "NetWatchdog");
+                    else L.Init(v);
                     a.Raw.Add(args[i - 1]);
                     a.Raw.Add(v);
                     continue;
@@ -79,7 +79,10 @@ namespace NetWatchdogUI
         public static string Quote(string s)
         {
             if (s.Length > 0 && s.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return s;
-            return "\"" + s.Replace("\"", "\\\"") + "\"";
+            // Double the run of backslashes before the closing quote, so a value ending in "\" stays quoted
+            int tail = 0;
+            while (tail < s.Length && s[s.Length - 1 - tail] == '\\') tail++;
+            return "\"" + s.Replace("\"", "\\\"") + new string('\\', tail) + "\"";
         }
 
         public string CommandLine(params string[] extra)
@@ -121,7 +124,8 @@ namespace NetWatchdogUI
             // copy it to the temp folder and run the copy
             if (a.Uninstall && a.Snapshot == null && !a.Relocated)
             {
-                string temp = Path.Combine(Path.GetTempPath(), "NetWatchdog-uninstall-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".exe");
+                // Run the copy from an admin-only folder, so another program cannot swap the elevated uninstaller
+                string temp = Path.Combine(Installer.SecureSelfTempDir(), "NetWatchdog-uninstall.exe");
                 File.Copy(SelfPath, temp, true);
                 var p = Process.Start(new ProcessStartInfo(temp, a.CommandLine("--user", a.User, "--relocated")) { UseShellExecute = false });
                 if (!a.Quiet) return 0;
@@ -192,8 +196,9 @@ namespace NetWatchdogUI
         public static string DefaultDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NetWatchdog"); } }
         public static string ConfigPath { get { return Path.Combine(DataDir, "config.json"); } }
 
-        // The shortcut is named in the installer's language; uninstall removes either name
-        static readonly string[] ShortcutNames = { "NetWatchdog.lnk", "网络看门狗.lnk" };
+        // The shortcut is named in the installer's language; uninstall removes every name
+        static readonly string[] ShortcutNames = { "NetWatchdog.lnk", "网络看门狗.lnk", "網路看門狗.lnk" };
+        static string ShortcutName { get { return L.Lang == "zh" ? ShortcutNames[1] : L.Lang == "zh-TW" ? ShortcutNames[2] : ShortcutNames[0]; } }
         static string ShortcutPath(string name) { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), name); }
 
         static readonly string[] ProgramFiles = { "NetWatchdog.ps1", "NetWatchdogUI.exe", "NetRepair.exe", "NetWatchdogSetup.exe" };
@@ -302,6 +307,7 @@ namespace NetWatchdogUI
         {
             Run("schtasks.exe", "/End /TN " + TaskName);
             if (deleteTask) Run("schtasks.exe", "/Delete /TN " + TaskName + " /F");
+            StopAi();
             foreach (var proc in Process.GetProcessesByName("NetWatchdogUI"))
             {
                 try { proc.Kill(); proc.WaitForExit(3000); } catch (Exception ex) { Log("Cannot end the tray panel: " + ex.Message); }
@@ -309,12 +315,64 @@ namespace NetWatchdogUI
             Thread.Sleep(500);
         }
 
+        // A Pi process started by AI repair runs as SYSTEM and outlives the watchdog; it keeps ai\work open, so
+        // it must be ended before the data folder can be removed
+        static void StopAi()
+        {
+            try
+            {
+                string running = Path.Combine(DataDir, "ai", "running.json");
+                if (!File.Exists(running)) return;
+                var d = new System.Web.Script.Serialization.JavaScriptSerializer().DeserializeObject(File.ReadAllText(running)) as Dictionary<string, object>;
+                object pid;
+                if (d != null && d.TryGetValue("pid", out pid))
+                    Run("taskkill.exe", "/T /F /PID " + Convert.ToInt32(pid, CultureInfo.InvariantCulture));
+            }
+            catch (Exception ex) { Log("Cannot end the AI process: " + ex.Message); }
+        }
+
         // Only SYSTEM and administrators may write the install folder: the watchdog runs its script as SYSTEM,
         // so ordinary users must not be able to change it
         const string LockedAcl = "/inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /Q";
+        // Same, with no access for ordinary users: for folders that must never be read by them
+        const string AdminOnlyAcl = "/inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /Q";
+
+        // A folder a normal user may have created before the install (ProgramData grants Users create rights) can
+        // be a junction or still be owned by that user, who would keep control of it. Refuse a reparse point, then
+        // take ownership and drop every inherited or user-granted ACE before applying our own.
+        static void SecureExistingDir(string dir)
+        {
+            if (!Directory.Exists(dir)) return;
+            if ((new DirectoryInfo(dir).Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException(L.F("{0} is a reparse point; delete it and run the installer again.", "{0} 是重解析点（junction/符号链接），请删除后重新运行安装程序。", dir));
+            Run("icacls.exe", Q(dir) + " /setowner *S-1-5-32-544 /T /C /L /Q");
+            Run("icacls.exe", Q(dir) + " /reset /T /C /L /Q");
+        }
+
+        // A temp file passed to an elevated tool, or run elevated, must sit where only administrators can write,
+        // not in the user's %TEMP% where another program could swap it. Returns the folder (admin-only, fresh).
+        // The relocated uninstaller: a fresh admin-only folder under %SystemRoot%\Temp, outside the data folder
+        // it is about to delete (a running exe cannot be deleted); ScheduleSelfDelete removes it afterwards
+        public static string SecureSelfTempDir()
+        {
+            string dir = Path.Combine(Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows", "Temp", "NetWatchdog-uninstall-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(dir);
+            Run("icacls.exe", Q(dir) + " " + AdminOnlyAcl);
+            return dir;
+        }
+
+        static string SecureTempDir()
+        {
+            string dir = Path.Combine(DataDir, "setup-tmp");
+            if (Directory.Exists(dir)) { try { Directory.Delete(dir, true); } catch { } }
+            Directory.CreateDirectory(dir);
+            Run("icacls.exe", Q(dir) + " " + AdminOnlyAcl);
+            return dir;
+        }
 
         static void CopyFiles(Plan p)
         {
+            SecureExistingDir(p.Dir);
             Directory.CreateDirectory(p.Dir);
             Check(Run("icacls.exe", Q(p.Dir) + " " + LockedAcl), L.T("Setting install folder permissions", "设置安装目录权限"));
             Extract("payload.NetWatchdog.ps1", Path.Combine(p.Dir, "NetWatchdog.ps1"));
@@ -332,7 +390,7 @@ namespace NetWatchdogUI
                 using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource))
                 using (var f = File.Create(path))
                 {
-                    if (s == null) throw new FileNotFoundException(L.T("The setup package is missing ", "安装包缺少 ") + resource);
+                    if (s == null) throw new FileNotFoundException(L.F("The setup package is missing {0}", "安装包缺少 {0}", resource));
                     s.CopyTo(f);
                 }
             });
@@ -342,11 +400,19 @@ namespace NetWatchdogUI
         static void PrepareData(Plan p)
         {
             string queue = Path.Combine(DataDir, "queue");
+            SecureExistingDir(DataDir);
+            SecureExistingDir(queue);
             Directory.CreateDirectory(queue);
             Check(Run("icacls.exe", Q(DataDir) + " " + LockedAcl), L.T("Setting data folder permissions", "设置数据目录权限"));
-            // The request queue also grants Modify to the signed-in user, so the panel can send requests without UAC
+            // The reset above made these inherit Users:RX again; they hold the API key and Wi-Fi passwords
+            foreach (var sub in new[] { Path.Combine(DataDir, "ai", "agent"), Path.Combine(DataDir, "wifi-backup") })
+                if (Directory.Exists(sub)) Check(Run("icacls.exe", Q(sub) + " " + AdminOnlyAcl), L.T("Setting data folder permissions", "设置数据目录权限"));
+            // The request queue also grants Modify to the signed-in user, so the panel can send requests without UAC.
+            // A deployment tool may run the installer as SYSTEM; then there is no single user, so Users get Modify.
             p.PanelSid = SidOf(p.User);
-            Check(Run("icacls.exe", Q(queue) + " /grant:r *" + p.PanelSid + ":(OI)(CI)M /Q"), L.T("Setting request folder permissions", "设置请求目录权限"));
+            Run("icacls.exe", Q(queue) + " /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F /Q");
+            string grantSid = (p.PanelSid == null || p.PanelSid == "S-1-5-18") ? "S-1-5-32-545" : p.PanelSid;
+            Check(Run("icacls.exe", Q(queue) + " /grant:r *" + grantSid + ":(OI)(CI)M /Q"), L.T("Setting request folder permissions", "设置请求目录权限"));
 
             // Early PowerShell-script installs kept the config in the program folder
             string legacy = Path.Combine(p.Dir, "config.json");
@@ -372,7 +438,7 @@ namespace NetWatchdogUI
 
         // The watchdog log uses the language chosen at install time, so it matches the panel and installer.
         // (With "auto" it would follow the system default language, which can differ from the user's.)
-        static string InstallLanguage { get { return L.Zh ? "zh" : "en"; } }
+        static string InstallLanguage { get { return L.Lang; } }
 
         public static string BuildConfig(List<DetectedLine> lines)
         {
@@ -438,10 +504,12 @@ namespace NetWatchdogUI
                 "  </Settings>\n" +
                 "  <Actions Context=\"Author\"><Exec><Command>powershell.exe</Command><Arguments>" + SecurityElement.Escape(args) + "</Arguments></Exec></Actions>\n" +
                 "</Task>\n";
-            string tmp = Path.Combine(Path.GetTempPath(), "NetWatchdog-task-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".xml");
+            // The XML registers a task that runs as SYSTEM; write it where only administrators can swap it
+            string dir = SecureTempDir();
+            string tmp = Path.Combine(dir, "task.xml");
             File.WriteAllText(tmp, xml, Encoding.Unicode);
             try { Check(Run("schtasks.exe", "/Create /TN " + TaskName + " /XML " + Q(tmp) + " /F"), L.T("Registering the scheduled task", "注册计划任务")); }
-            finally { File.Delete(tmp); }
+            finally { try { Directory.Delete(dir, true); } catch { } }
             Check(Run("schtasks.exe", "/Run /TN " + TaskName), L.T("Starting the scheduled task", "启动计划任务"));
         }
 
@@ -476,7 +544,7 @@ namespace NetWatchdogUI
             foreach (var name in ShortcutNames)
                 if (File.Exists(ShortcutPath(name))) File.Delete(ShortcutPath(name));
             if (p.Shortcut)
-                Shortcut.Create(ShortcutPath(L.T(ShortcutNames[0], ShortcutNames[1])), panel,
+                Shortcut.Create(ShortcutPath(ShortcutName), panel,
                     L.T("View line status, pause or resume automatic switching", "查看网络线路状态，暂停或恢复自动切换"));
         }
 
@@ -565,7 +633,7 @@ namespace NetWatchdogUI
                 try
                 {
                     using (var k = Registry.Users.OpenSubKey(sid + "\\" + RunKey, true))
-                        if (k != null) k.DeleteValue("NetWatchdogUI", false);
+                        if (k != null) { k.DeleteValue("NetWatchdogUI", false); k.DeleteValue("NetWatchdogAIReminder", false); }
                 }
                 catch (Exception ex) { Log("Cannot remove the sign-in start entry: " + ex.Message); }
             }
@@ -580,21 +648,36 @@ namespace NetWatchdogUI
                 string path = Path.Combine(old.Dir, f);
                 if (File.Exists(path)) Retry(() => File.Delete(path));
             }
+            // Pi, installed from the panel's AI tab into a fixed subfolder of the install folder
+            string pi = Path.Combine(old.Dir, "pi");
+            if (Directory.Exists(pi)) Retry(() => Directory.Delete(pi, true));
             if (Directory.Exists(old.Dir) && !Directory.EnumerateFileSystemEntries(old.Dir).Any()) Directory.Delete(old.Dir);
         }
 
         static void RemoveData(bool all)
         {
             if (!Directory.Exists(DataDir)) return;
-            var names = new List<string> { "status.json", "status.json.tmp", "overrides.json", "overrides.json.tmp" };
-            if (all) names.AddRange(new[] { "config.json", "watchdog.log", "watchdog.log.1" });
+            // Keeping settings keeps overrides.json: it holds the disabled lines, the pause state and panel settings,
+            // which the panel and the README promise survive a reinstall
+            var names = new List<string> { "status.json", "status.json.tmp" };
+            if (all) names.AddRange(new[] { "overrides.json", "overrides.json.tmp", "config.json", "watchdog.log", "watchdog.log.1", "admin-allow.json", "admin-allow.json.tmp", "repair-state.json", "repair-state.json.tmp", "reboots.json", "repair.log" });
             foreach (var n in names)
             {
                 string path = Path.Combine(DataDir, n);
-                if (File.Exists(path)) File.Delete(path);
+                if (File.Exists(path)) Retry(() => File.Delete(path));
             }
-            string queue = Path.Combine(DataDir, "queue");
-            if (Directory.Exists(queue)) Directory.Delete(queue, true);
+            foreach (var d in new[] { "queue", "setup-tmp" })
+            {
+                string path = Path.Combine(DataDir, d);
+                if (Directory.Exists(path)) Retry(() => Directory.Delete(path, true));
+            }
+            // AI configuration (including the API key) and logs; the Wi-Fi backup holds passwords in clear text
+            if (all)
+                foreach (var dir in new[] { "ai", "wifi-backup" })
+                {
+                    string path = Path.Combine(DataDir, dir);
+                    if (Directory.Exists(path)) Directory.Delete(path, true);
+                }
             if (!Directory.EnumerateFileSystemEntries(DataDir).Any()) Directory.Delete(DataDir);
         }
 
@@ -602,7 +685,12 @@ namespace NetWatchdogUI
         {
             try
             {
-                Process.Start(new ProcessStartInfo("cmd.exe", "/c ping 127.0.0.1 -n 3 > nul & del /f /q " + Q(SetupProgram.SelfPath))
+                // The relocated copy sits alone in its own NetWatchdog-uninstall-* folder; remove that folder too
+                string self = SetupProgram.SelfPath;
+                string folder = Path.GetDirectoryName(self);
+                string cmd = "/c ping 127.0.0.1 -n 3 > nul & del /f /q " + Q(self);
+                if (Path.GetFileName(folder).StartsWith("NetWatchdog-uninstall-", StringComparison.OrdinalIgnoreCase)) cmd += " & rmdir /q " + Q(folder);
+                Process.Start(new ProcessStartInfo("cmd.exe", cmd)
                 {
                     CreateNoWindow = true,
                     UseShellExecute = false,
@@ -831,6 +919,8 @@ namespace NetWatchdogUI
             Installer.Log("==== NetWatchdog Setup " + AppInfo.Version + ", arguments: " + string.Join(" ", Environment.GetCommandLineArgs().Skip(1)));
             theme = Theme.Load(args.ForceDark);
             win = (Window)Xaml.Load("NetWatchdogUI.Setup.xaml");
+            L.Apply(win);
+            ((TextBlock)win.FindName("HeadingText")).FontFamily = new FontFamily(L.Current.Font.Replace("Variable Text", "Variable Display"));
             theme.Apply(win.Resources);
             win.DataContext = vm;
             win.AddHandler(ButtonBase.ClickEvent, new RoutedEventHandler(OnClick));
@@ -880,7 +970,7 @@ namespace NetWatchdogUI
             vm.Heading = L.T("NetWatchdog", "网络看门狗");
             vm.Subheading = L.F("Version {0} · automatic wired and Wi-Fi failover", "版本 {0} · 有线与 Wi-Fi 自动切换", AppInfo.Version);
             vm.InstallDir = plan.Dir;
-            vm.InstallDirNote = L.T("Config and log are kept in ", "配置和日志保存在 ") + Installer.DataDir;
+            vm.InstallDirNote = L.F("Config and log are kept in {0}", "配置和日志保存在 {0}", Installer.DataDir);
             vm.OptStandby = plan.Standby;
             vm.OptAutostart = plan.Autostart;
             vm.OptShortcut = plan.Shortcut;
@@ -1187,15 +1277,7 @@ namespace NetWatchdogUI
                 t.Stop();
                 try
                 {
-                    Native.RECT r;
-                    Native.GetWindowRect(new WindowInteropHelper(win).Handle, out r);
-
-                    var rect = new SD.Rectangle(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
-                    using (var bmp = new SD.Bitmap(rect.Width, rect.Height))
-                    {
-                        using (var g = SD.Graphics.FromImage(bmp)) g.CopyFromScreen(rect.Location, SD.Point.Empty, rect.Size);
-                        bmp.Save(args.Snapshot, SD.Imaging.ImageFormat.Png);
-                    }
+                    Native.SaveWindow(new WindowInteropHelper(win).Handle, args.Snapshot);
                 }
                 catch (Exception ex) { Installer.Log(ex.ToString()); }
                 win.Close();
