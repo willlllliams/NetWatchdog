@@ -2382,9 +2382,13 @@ namespace NetWatchdogUI
             if (!File.Exists(AiSetup.PiCli(dir))) { SetError(L.T("Pi is not installed", "没有安装 Pi"), dir); Refresh(); return; }
             try
             {
-                var psi = new ProcessStartInfo("cmd.exe", "/k title Pi & echo " + L.T("Type pi to start the agent.", "输入 pi 启动代理。") + " & cd /d \"" + dir + "\"")
+                // This Pi keeps its settings in its own folder, so it does not pick up what cc-switch wrote to ~/.pi
+                string mine = AiSetup.UserAgentDir;
+                Directory.CreateDirectory(mine);
+                var psi = new ProcessStartInfo("cmd.exe", "/k title Pi & echo " + L.F("Type pi to start. Its settings are kept in {0}", "输入 pi 启动。它的配置保存在 {0}", mine) + " & cd /d \"" + dir + "\"")
                     { UseShellExecute = false };
                 psi.EnvironmentVariables["PATH"] = dir + ";" + Environment.GetEnvironmentVariable("PATH");
+                psi.EnvironmentVariables["PI_CODING_AGENT_DIR"] = mine;
                 Process.Start(psi);
                 HideFlyout();
             }
@@ -2400,7 +2404,8 @@ namespace NetWatchdogUI
             try
             {
                 answer = MessageBox.Show(
-                    L.F("Delete Pi from {0}? AI repair cannot run without it.", "删除 {0} 里的 Pi？删除后 AI 修复将无法运行。", dir),
+                    L.F("Delete Pi from {0}, together with the settings of the Pi you open from here? AI repair cannot run without it.",
+                        "删除 {0} 里的 Pi，以及从这里进入的 Pi 的配置？删除后 AI 修复将无法运行。", dir),
                     L.T("NetWatchdog", "网络看门狗"), MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             }
             finally { EndModal(); }

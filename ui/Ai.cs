@@ -35,6 +35,9 @@ namespace NetWatchdogUI
         public static string AgentDir { get { return Path.Combine(AiDir, "agent"); } }
         public static string PromptPath { get { return Path.Combine(AiDir, "prompt.md"); } }
         public static string ConfigPath { get { return Path.Combine(AiDir, "ai.json"); } }
+        // The settings of the Pi that Open Pi starts: the signed-in user's own folder, separate from ~/.pi (which
+        // cc-switch writes to) and from the watchdog's administrator-only one. Created with Pi, deleted with Pi.
+        public static string UserAgentDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NetWatchdog", "pi-agent"); } }
         // Where the panel installs Pi unless another folder was chosen: next to the panel, in the install folder
         public static string DefaultPiDir { get { return Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "pi"); } }
         public static string PiCli(string dir) { return Path.Combine(dir, @"node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js"); }
@@ -248,6 +251,9 @@ namespace NetWatchdogUI
                 if (!File.Exists(PiCli(path))) return 7;
                 if ((new DirectoryInfo(path).Attributes & FileAttributes.ReparsePoint) != 0) return 6;
                 Directory.Delete(path, true);
+                // The user's own Pi settings go with Pi (the helper runs as the same account, through UAC)
+                string mine = UserAgentDir;
+                if (Directory.Exists(mine) && (new DirectoryInfo(mine).Attributes & FileAttributes.ReparsePoint) == 0) Directory.Delete(mine, true);
                 // A folder chosen by hand is forgotten with it, so the next install goes to the default again
                 if (cfg.ContainsKey("piDir")) SaveConfig("piDir", null);
                 return 0;

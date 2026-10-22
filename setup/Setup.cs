@@ -642,6 +642,22 @@ namespace NetWatchdogUI
 
         // Delete only our own files and remove the folder once it is empty, so a wrong path in the
         // registry can never delete anything else
+        // %LOCALAPPDATA%\NetWatchdog\pi-agent of the user with this SID, from the profile list (the installer runs elevated,
+        // possibly as another account than the user who installed)
+        static string UserPiSettings(string sid)
+        {
+            if (string.IsNullOrEmpty(sid)) return null;
+            try
+            {
+                using (var k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + sid))
+                {
+                    string profile = k == null ? null : k.GetValue("ProfileImagePath") as string;
+                    return string.IsNullOrEmpty(profile) ? null : Path.Combine(Environment.ExpandEnvironmentVariables(profile), "AppData", "Local", "NetWatchdog", "pi-agent");
+                }
+            }
+            catch { return null; }
+        }
+
         static void RemoveFiles(InstalledInfo old, bool removePi)
         {
             foreach (var f in ProgramFiles.Concat(new[] { "config.json" }))
@@ -654,6 +670,13 @@ namespace NetWatchdogUI
             // the AI tab is never touched.
             string pi = Path.Combine(old.Dir, "pi");
             if (removePi && Directory.Exists(pi)) Retry(() => Directory.Delete(pi, true));
+            // The settings of the Pi opened from the panel belong to the user who installed; they go with Pi
+            if (removePi)
+            {
+                string mine = UserPiSettings(old.PanelSid);
+                if (mine != null && Directory.Exists(mine) && (new DirectoryInfo(mine).Attributes & FileAttributes.ReparsePoint) == 0)
+                    Retry(() => Directory.Delete(mine, true));
+            }
             if (Directory.Exists(old.Dir) && !Directory.EnumerateFileSystemEntries(old.Dir).Any()) Directory.Delete(old.Dir);
         }
 

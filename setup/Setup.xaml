@@ -215,7 +215,7 @@
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center">
                                     <TextBlock Text="{local:Tr 'Delete Pi', '删除 Pi'}" FontSize="14"/>
-                                    <TextBlock Text="{local:Tr 'The Pi installed for AI repair in the install folder', '安装目录里为 AI 修复安装的 Pi'}" Foreground="{DynamicResource SubText}"
+                                    <TextBlock Text="{local:Tr 'The Pi in the install folder and the settings of the Pi opened from the panel', '安装目录里的 Pi，以及从面板进入的 Pi 的配置'}" Foreground="{DynamicResource SubText}"
                                                Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                                 <CheckBox Grid.Column="2" Style="{StaticResource Toggle}" IsChecked="{Binding OptRemovePi}"/>

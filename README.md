@@ -229,12 +229,12 @@ The install location and the configuration folder differ. cc-switch installs Pi 
 
 Only administrators can change any of the three. Your own `~/.pi` and cc-switch's configuration are not touched, and both can be used side by side.
 
-cc-switch therefore does not see the Pi the watchdog installed, and showing it as not installed is correct: cc-switch looks for a `pi` command it can run, and `C:\Program Files\NetWatchdog\pi` is not on the PATH. To use Pi yourself or let cc-switch manage it, install it again from cc-switch; the two installations do not affect each other. Open Pi on the AI tab opens a command prompt where `pi` can be run directly, using your own `~/.pi` configuration rather than the watchdog's.
+cc-switch therefore does not see the Pi the watchdog installed, and showing it as not installed is correct: cc-switch looks for a `pi` command it can run, and `C:\Program Files\NetWatchdog\pi` is not on the PATH. To use Pi yourself or let cc-switch manage it, install it again from cc-switch; the two installations do not affect each other. Open Pi on the AI tab opens a command prompt where `pi` can be run directly. This Pi has its own settings, kept in `%LOCALAPPDATA%\NetWatchdog\pi-agent` (through `PI_CODING_AGENT_DIR`); it does not read the APIs cc-switch wrote to `~/.pi`, and it is not the watchdog's copy either. You can configure models in it yourself.
 
 Once Pi is installed, its row on the AI tab offers these actions:
 
-- **Open Pi** opens a command prompt with the Pi folder on its PATH, so `pi` can be run directly. The window runs as you.
-- **Uninstall Pi** deletes the Pi folder and asks for administrator approval. The elevated helper reads the folder from `ai.json`, which only administrators can change, and never from its command line, so it cannot be pointed at another folder.
+- **Open Pi** opens a command prompt with the Pi folder on its PATH, so `pi` can be run directly. The window runs as you and uses the separate settings in `%LOCALAPPDATA%\NetWatchdog\pi-agent`.
+- **Uninstall Pi** deletes the Pi folder and the separate settings above, and asks for administrator approval. The elevated helper reads the folder from `ai.json`, which only administrators can change, and never from its command line, so it cannot be pointed at another folder.
 - **Change folder** chooses where Pi is installed. Its content runs as SYSTEM, so only a folder that ordinary users cannot write is accepted, and a reparse point is refused; a folder that does not qualify is rejected with the reason. Reset folder goes back to `pi` in the install folder. The folder is written to `ai.json` and read by the watchdog when it starts Pi.
 
 ### Configuring the local AI service
@@ -616,7 +616,7 @@ The uninstaller runs six steps:
 1. Stop and delete the scheduled task, end a running AI process and end the tray panel.
 2. Restore network settings: interfaces whose metric equals `demotedMetric` go back to automatic, and if the installer turned on Wi-Fi standby, that policy value is removed. A policy you had set yourself before installing is left alone.
 3. Remove the Start menu shortcut and the sign-in start entries, including the AI repair reminder.
-4. Delete program files: only the files the installer put there are deleted, and the folder is removed once it is empty. Whether the `pi` folder the panel installed there is deleted as well is decided by Delete Pi in the uninstall wizard, which appears only when that folder exists and deletes it by default; `--keep-pi` keeps it in a quiet uninstall. A Pi folder you pointed elsewhere with Change folder is never deleted.
+4. Delete program files: only the files the installer put there are deleted, and the folder is removed once it is empty. Whether the `pi` folder the panel installed there is deleted as well (together with the separate settings of Open Pi) is decided by Delete Pi in the uninstall wizard, which appears only when that folder exists and deletes it by default; `--keep-pi` keeps it in a quiet uninstall. A Pi folder you pointed elsewhere with Change folder is never deleted.
 5. Clean up runtime state, and delete settings and log if chosen; deleting settings also removes the AI configuration (including the API key), the AI logs and the Wi-Fi backup.
 6. Remove the entry from Installed apps.
 
